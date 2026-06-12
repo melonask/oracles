@@ -72,6 +72,7 @@ fn run() -> Result<()> {
             kind: ProviderKind::Static,
             method: None,
             url_template: None,
+            transport: None,
             auth: None,
             rate_path: None,
             source_updated_at_path: None,

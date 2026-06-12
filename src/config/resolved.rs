@@ -626,6 +626,8 @@ pub struct ResolvedProvider {
     pub method: Option<String>,
     /// URL template with `{placeholder}` substitution for HTTP-based providers.
     pub url_template: Option<String>,
+    /// Optional transport profile reference from [transports.http].
+    pub transport: Option<String>,
     /// Authentication configuration.
     pub auth: Option<ResolvedProviderAuth>,
     /// JSON path expression to extract the rate value from the response.

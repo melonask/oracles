@@ -24,8 +24,10 @@ oracles — multi-source oracle rate fetcher
 
 Usage:
   oracles [OPTIONS]
+  oracles ping
 
 Options:
+  --ping               Print 'pong' and exit
   --config <path>      Path to config file (default: Config.toml)
   --check              Validate config and exit
   --once               Fetch rates once and exit
@@ -34,6 +36,7 @@ Options:
 
 Examples:
   oracles
+  oracles ping
   oracles --config myconfig.toml
   oracles --config myconfig.toml --check
   oracles --config myconfig.toml --once

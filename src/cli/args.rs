@@ -8,6 +8,8 @@ pub struct Args {
     pub once: bool,
     /// If true, validate the config and exit without fetching.
     pub check: bool,
+    /// If true, print "pong" and exit without loading config.
+    pub ping: bool,
     /// Override the log level from config (e.g., "error", "warn", "info", "debug").
     pub log_level: Option<String>,
 }
@@ -22,6 +24,7 @@ pub fn parse_args() -> Result<Args> {
     let mut config_path = None;
     let mut once = false;
     let mut check = false;
+    let mut ping = false;
     let mut log_level = None;
 
     let mut args = std::env::args().skip(1);
@@ -41,6 +44,7 @@ pub fn parse_args() -> Result<Args> {
             }
             "--once" => once = true,
             "--check" => check = true,
+            "ping" | "--ping" => ping = true,
             "--log-level" => {
                 let value = args
                     .next()
@@ -61,6 +65,7 @@ pub fn parse_args() -> Result<Args> {
         config_path: config_path.unwrap_or_else(|| "Config.toml".to_owned()),
         once,
         check,
+        ping,
         log_level,
     })
 }

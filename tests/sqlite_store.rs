@@ -258,6 +258,7 @@ fn minimal_config(db_url: &str) -> oracles::Result<ResolvedConfig> {
             kind: ProviderKind::Static,
             method: None,
             url_template: None,
+            transport: None,
             auth: None,
             rate_path: None,
             source_updated_at_path: None,

@@ -13,7 +13,10 @@ use time::Duration;
 /// This function performs all validation: checks cross-references between
 /// assets, chains, providers, and stores; resolves defaults; expands
 /// environment variables; and ensures all identifiers are well-formed.
-pub fn resolve_config(raw: RawConfig) -> Result<ResolvedConfig> {
+///
+/// `transports` carries optional universal transport profiles extracted
+/// from `[transports.http]` and `[transports.webhook]`.
+pub fn resolve_config(raw: RawConfig, transports: RawTransportsConfig) -> Result<ResolvedConfig> {
     if raw.version != 1 {
         return Err(Error::Config(format!(
             "unsupported config version: {}",
@@ -45,11 +48,21 @@ pub fn resolve_config(raw: RawConfig) -> Result<ResolvedConfig> {
             oracles.stale_after_secs, oracles.refresh_secs
         )));
     }
+    // Extract fields needed by resolve_assets before partial moves.
+    let oracle_asset_ids = raw.oracles.asset_ids.clone();
+    let oracle_assets_map = raw.oracles.assets.clone();
+
     // Now move-owned fields out of raw.oracles.
-    let providers = resolve_providers(raw.oracles.providers)?;
-    let events = resolve_events(raw.oracles.events, &raw.oracles.outbox)?;
+    let providers = resolve_providers(raw.oracles.providers, &transports)?;
+    let events = resolve_events(raw.oracles.events, &raw.oracles.outbox, &transports)?;
     let outbox = resolve_outbox(raw.oracles.outbox, &events)?;
-    let assets = resolve_assets(raw.assets, &chains, &providers)?;
+    let assets = resolve_assets(
+        raw.assets,
+        oracle_asset_ids,
+        oracle_assets_map,
+        &chains,
+        &providers,
+    )?;
 
     // Forbid events.record=false + outbox mode — produces orphaned outbox rows.
     if matches!(events.mode, EventMode::Outbox) && !events.record {
@@ -294,6 +307,9 @@ fn resolve_http(raw: Option<RawHttpConfig>) -> Result<ResolvedHttpConfig> {
         request_timeout_secs: None,
         max_retries: None,
         retry_backoff_ms: None,
+        bind: None,
+        prefix: None,
+        api_key: None,
     });
 
     let request_timeout_secs = raw.request_timeout_secs.unwrap_or(15);
@@ -337,6 +353,7 @@ fn resolve_chains(
 
 fn resolve_providers(
     raw: BTreeMap<String, RawProviderConfig>,
+    transports: &RawTransportsConfig,
 ) -> Result<BTreeMap<ProviderId, ResolvedProvider>> {
     let mut providers = BTreeMap::new();
 
@@ -357,6 +374,16 @@ fn resolve_providers(
         if kind == ProviderKind::HttpJson && provider.url_template.is_none() {
             return Err(Error::Config(format!(
                 "http_json provider `{}` requires url_template",
+                id.as_str()
+            )));
+        }
+
+        // Resolve HTTP transport profile reference.
+        if let Some(ref transport_id) = provider.transport
+            && !transports.http.contains_key(transport_id)
+        {
+            return Err(Error::Config(format!(
+                "provider `{}` references unknown HTTP transport profile `{transport_id}`",
                 id.as_str()
             )));
         }
@@ -411,6 +438,7 @@ fn resolve_providers(
                 kind,
                 method: provider.method,
                 url_template: provider.url_template,
+                transport: provider.transport,
                 auth,
                 rate_path,
                 source_updated_at_path,
@@ -530,11 +558,13 @@ fn resolve_safety(
 
     let min_rate = safety
         .and_then(|s| s.min_rate.as_deref())
+        .filter(|v| !v.is_empty())
         .map(RateAmount::parse)
         .transpose()?;
 
     let max_rate = safety
         .and_then(|s| s.max_rate.as_deref())
+        .filter(|v| !v.is_empty())
         .map(RateAmount::parse)
         .transpose()?;
 
@@ -615,13 +645,27 @@ fn resolve_safety(
 
 fn resolve_assets(
     raw: BTreeMap<String, RawAssetConfig>,
+    oracle_asset_ids: Option<Vec<String>>,
+    oracle_assets_map: Option<BTreeMap<String, RawOracleAssetConfig>>,
     chains: &BTreeMap<ChainId, ResolvedChain>,
     providers: &BTreeMap<ProviderId, ResolvedProvider>,
 ) -> Result<Vec<ResolvedAsset>> {
     let mut assets = Vec::new();
 
-    for (asset_id, asset) in raw {
-        let id = AssetId::new(asset_id)?;
+    // Determine which assets to process: if asset_ids is set, filter.
+    let asset_ids: Option<Vec<&str>> = oracle_asset_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(String::as_str).collect());
+
+    for (asset_key, asset) in raw {
+        // If asset_ids filter is active, skip assets not in the list.
+        if let Some(ref ids) = asset_ids
+            && !ids.contains(&asset_key.as_str())
+        {
+            continue;
+        }
+
+        let id = AssetId::new(asset_key.clone())?;
         let chain_id = ChainId::new(asset.chain.clone())?;
 
         let Some(chain) = chains.get(&chain_id) else {
@@ -634,33 +678,68 @@ fn resolve_assets(
 
         let mut feeds = Vec::new();
 
-        for feed in asset.feeds.unwrap_or_default() {
-            let provider = ProviderId::new(feed.provider)?;
+        // Check for oracle-specific feeds first (from [oracles.assets.<id>]).
+        if let Some(ref oracle_assets) = oracle_assets_map
+            && let Some(oracle_asset) = oracle_assets.get(&asset_key)
+        {
+            // Use feeds from [oracles.assets.<id>] instead of shared feeds.
+            for feed in oracle_asset.feeds.clone().unwrap_or_default() {
+                let provider = ProviderId::new(feed.provider)?;
 
-            if !providers.contains_key(&provider) {
-                return Err(Error::Config(format!(
-                    "asset `{}` references unknown provider `{}`",
-                    id.as_str(),
-                    provider.as_str()
-                )));
+                if !providers.contains_key(&provider) {
+                    return Err(Error::Config(format!(
+                        "oracle asset `{}` references unknown provider `{}`",
+                        id.as_str(),
+                        provider.as_str()
+                    )));
+                }
+
+                feeds.push(ResolvedFeed {
+                    enabled: feed.enabled.unwrap_or(true),
+                    provider,
+                    priority: feed.priority,
+                    params: feed.params.unwrap_or_default(),
+                });
             }
-
-            feeds.push(ResolvedFeed {
-                enabled: feed.enabled.unwrap_or(true),
-                provider,
-                priority: feed.priority,
-                params: feed.params.unwrap_or_default(),
-            });
         }
 
-        if feeds.is_empty() && asset.enabled.unwrap_or(true) {
+        // If no oracle-specific feeds were found, fall back to shared asset feeds.
+        if feeds.is_empty() {
+            for feed in asset.feeds.unwrap_or_default() {
+                let provider = ProviderId::new(feed.provider)?;
+
+                if !providers.contains_key(&provider) {
+                    return Err(Error::Config(format!(
+                        "asset `{}` references unknown provider `{}`",
+                        id.as_str(),
+                        provider.as_str()
+                    )));
+                }
+
+                feeds.push(ResolvedFeed {
+                    enabled: feed.enabled.unwrap_or(true),
+                    provider,
+                    priority: feed.priority,
+                    params: feed.params.unwrap_or_default(),
+                });
+            }
+        }
+
+        let is_enabled = if let Some(ref oracle_assets) = oracle_assets_map {
+            oracle_assets
+                .get(&asset_key)
+                .and_then(|oa| oa.enabled)
+                .unwrap_or(asset.enabled.unwrap_or(true))
+        } else {
+            asset.enabled.unwrap_or(true)
+        };
+
+        if feeds.is_empty() && is_enabled {
             return Err(Error::Config(format!(
                 "asset `{}` must define at least one feed when enabled",
                 id.as_str()
             )));
         }
-
-        let enabled = asset.enabled.unwrap_or(true);
 
         let x402 = asset.x402.map(|x| ResolvedX402Config {
             enabled: x.enabled.unwrap_or(true),
@@ -680,7 +759,7 @@ fn resolve_assets(
 
         assets.push(ResolvedAsset {
             id,
-            enabled,
+            enabled: is_enabled,
             chain_id,
             caip2: chain.caip2.clone(),
             symbol: asset.symbol,
@@ -694,16 +773,19 @@ fn resolve_assets(
             safety_max_change_pct: safety
                 .as_ref()
                 .and_then(|s| s.max_change_pct.as_deref())
+                .filter(|v| !v.is_empty())
                 .map(|v| parse_decimal(v, "asset.safety.max_change_pct"))
                 .transpose()?,
             safety_min_rate: safety
                 .as_ref()
                 .and_then(|s| s.min_rate.as_deref())
+                .filter(|v| !v.is_empty())
                 .map(RateAmount::parse)
                 .transpose()?,
             safety_max_rate: safety
                 .as_ref()
                 .and_then(|s| s.max_rate.as_deref())
+                .filter(|v| !v.is_empty())
                 .map(RateAmount::parse)
                 .transpose()?,
             safety_action: safety
@@ -720,6 +802,7 @@ fn resolve_assets(
 fn resolve_events(
     raw_events: Option<RawEventsConfig>,
     raw_outbox: &Option<RawOutboxConfig>,
+    transports: &RawTransportsConfig,
 ) -> Result<ResolvedEventsConfig> {
     let request_timeout_secs = raw_outbox
         .as_ref()
@@ -751,6 +834,11 @@ fn resolve_events(
     let mut sinks = BTreeMap::new();
 
     for (id, sink) in events.sinks.unwrap_or_default() {
+        // Skip sinks that are explicitly disabled (universal config compatibility).
+        if sink.enabled == Some(false) {
+            continue;
+        }
+
         let resolved = match sink.kind.as_str() {
             "log" => {
                 let level = sink.level.unwrap_or_else(|| "warn".to_owned());
@@ -805,9 +893,35 @@ fn resolve_events(
                     }
                 }
 
-                let body = sink
-                    .body
-                    .ok_or_else(|| Error::Config(format!("webhook sink `{id}` requires body")))?;
+                // Resolve webhook transport profile reference.
+                if let Some(ref transport_id) = sink.transport
+                    && !transports.webhook.contains_key(transport_id)
+                {
+                    return Err(Error::Config(format!(
+                        "webhook sink \"{id}\" references unknown webhook transport profile `{transport_id}`"
+                    )));
+                }
+
+                // If a transport profile is referenced, url_env becomes optional
+                // (the transport profile provides the URL).
+                let url_env = match (&sink.url_env, &sink.transport) {
+                    (None, None) => {
+                        return Err(Error::Config(format!(
+                            "webhook sink `{id}` requires url_env or transport"
+                        )));
+                    }
+                    (Some(ue), _) => ue.clone(),
+                    (None, Some(_)) => {
+                        // Will be resolved from transport profile at runtime;
+                        // use a placeholder that the transport reference replaces.
+                        String::new()
+                    }
+                };
+
+                let body = sink.body.ok_or_else(|| {
+                    // If transport is used, body is still required for the template.
+                    Error::Config(format!("webhook sink `{id}` requires body"))
+                })?;
 
                 // validate webhook body format.
                 match body.format.as_str() {
@@ -820,9 +934,7 @@ fn resolve_events(
                 }
 
                 ResolvedEventSink::Webhook {
-                    url_env: sink.url_env.ok_or_else(|| {
-                        Error::Config(format!("webhook sink `{id}` requires url_env"))
-                    })?,
+                    url_env,
                     method,
                     headers: sink.headers.unwrap_or_default(),
                     body_format: body.format,

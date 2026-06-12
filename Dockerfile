@@ -55,9 +55,17 @@ RUN mkdir -p /data /etc/oracles \
 
 COPY --from=builder /usr/local/bin/oracles /usr/local/bin/oracles
 
+LABEL org.opencontainers.image.title="Oracles" \
+      org.opencontainers.image.description="Stateless cryptocurrency rate oracle service/library" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/melonask/oracles"
+
 USER oracles:oracles
 
 VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["oracles", "ping"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "oracles"]
 CMD ["--config", "/etc/oracles/Config.toml"]

@@ -36,6 +36,9 @@ pub struct RawLogConfig {
     pub level: Option<String>,
     /// Log format (`"json"`, `"pretty"`, `"compact"`).
     pub format: Option<String>,
+    /// Optional log file path. Empty disables file logging.
+    /// Silently accepted by oracles (file logging is not yet implemented).
+    pub file: Option<String>,
 }
 
 /// Raw store backend configuration.
@@ -68,6 +71,15 @@ pub struct RawHttpConfig {
     pub max_retries: Option<u32>,
     /// Retry backoff delay in milliseconds.
     pub retry_backoff_ms: Option<u64>,
+    /// Optional inbound bind address default (used by server-enabled packages).
+    /// Silently accepted by oracles.
+    pub bind: Option<String>,
+    /// Optional route prefix (used by server-enabled packages).
+    /// Silently accepted by oracles.
+    pub prefix: Option<String>,
+    /// Shared API key default (used by server-enabled packages).
+    /// Silently accepted by oracles.
+    pub api_key: Option<String>,
 }
 
 /// Raw blockchain network configuration.
@@ -85,6 +97,9 @@ pub struct RawChainConfig {
     pub rpc_urls: Option<Vec<String>>,
     /// Required block confirmations.
     pub confirmations: Option<u32>,
+    /// Optional derivation alias (e.g., "evm", "btc", "solana").
+    /// Used by Ladon for address derivation; silently accepted by other packages.
+    pub derivation: Option<String>,
 }
 
 /// Raw asset configuration.
@@ -190,6 +205,16 @@ pub struct RawOraclesConfig {
     pub outbox: Option<RawOutboxConfig>,
     /// Provider definitions.
     pub providers: BTreeMap<String, RawProviderConfig>,
+    /// Asset ids to price (selects from shared [assets]).
+    /// When set, only these shared assets are resolved.
+    pub asset_ids: Option<Vec<String>>,
+    /// Oracle-specific asset feed definitions (keyed by asset id).
+    /// Feeds here are combined with identity from shared [assets.<id>].
+    pub assets: Option<BTreeMap<String, RawOracleAssetConfig>>,
+    /// Deployment toggle (ignored by oracles, used by deployment tooling).
+    /// This field is silently accepted for universal config compatibility.
+    #[cfg_attr(feature = "config-toml", serde(default))]
+    pub enabled: Option<bool>,
 }
 
 /// Raw rate table configuration.
@@ -251,6 +276,7 @@ pub struct RawConsensusSafetyConfig {
     /// Minimum number of successful feeds.
     pub min_successful_feeds: Option<usize>,
     /// Maximum provider spread as a percentage.
+    #[cfg_attr(feature = "config-toml", serde(alias = "max_deviation_pct"))]
     pub max_provider_spread_pct: Option<String>,
     /// Action when consensus fails.
     pub action: Option<String>,
@@ -268,6 +294,7 @@ pub struct RawEventsConfig {
     /// Store backend for events.
     pub store: Option<String>,
     /// Whether to persist events.
+    #[cfg_attr(feature = "config-toml", serde(alias = "store_events"))]
     pub record: Option<bool>,
     /// Events table name.
     pub table: Option<String>,
@@ -293,12 +320,18 @@ pub struct RawEventRouteConfig {
 }
 
 /// Raw event sink configuration.
+///
+/// Supports both the map-key format `[oracles.events.sinks.<name>]` and
+/// fields from the array format `[[oracles.events.sinks]]` (via the loader
+/// conversion).
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
 pub struct RawEventSinkConfig {
-    /// Sink kind (`"log"`, `"telegram"`, `"webhook"`).
+    /// Sink kind (`"log"`, `"telegram"`, `"webhook"`, `"table"`).
     pub kind: String,
+    /// Whether this sink is enabled (universal config field).
+    pub enabled: Option<bool>,
     /// Log level for log sinks.
     pub level: Option<String>,
     /// Env var for Telegram bot token.
@@ -319,6 +352,18 @@ pub struct RawEventSinkConfig {
     pub headers: Option<BTreeMap<String, String>>,
     /// Webhook body configuration.
     pub body: Option<RawWebhookBodyConfig>,
+    /// Webhook transport profile reference from [transports.webhook] (universal config).
+    pub transport: Option<String>,
+    /// Direct webhook URL override (universal config).
+    pub url: Option<String>,
+    /// Token override for webhook sinks (universal config).
+    pub token: Option<String>,
+    /// Request timeout override in seconds (universal config).
+    pub timeout_secs: Option<u64>,
+    /// Maximum retries override (universal config).
+    pub max_retries: Option<u32>,
+    /// Initial retry backoff override in ms (universal config).
+    pub retry_base_ms: Option<u64>,
 }
 
 /// Raw webhook body configuration.
@@ -344,10 +389,16 @@ pub struct RawOutboxConfig {
     /// Outbox table name.
     pub table: Option<String>,
     /// Dispatch interval in seconds.
+    #[cfg_attr(feature = "config-toml", serde(alias = "poll_interval_secs"))]
     pub dispatch_interval_secs: Option<u64>,
     /// Maximum delivery retries.
+    #[cfg_attr(feature = "config-toml", serde(alias = "max_attempts"))]
     pub max_retries: Option<u32>,
     /// Retry backoff in seconds.
+    #[cfg_attr(
+        feature = "config-toml",
+        serde(alias = "retry_backoff_secs", alias = "retry_base_ms")
+    )]
     pub retry_backoff_secs: Option<u64>,
     /// Request timeout in seconds.
     pub request_timeout_secs: Option<u64>,
@@ -366,6 +417,9 @@ pub struct RawProviderConfig {
     pub method: Option<String>,
     /// URL template for HTTP-based providers.
     pub url_template: Option<String>,
+    /// Optional HTTP transport profile reference from [transports.http].
+    /// When set, HTTP client settings from the referenced profile are used.
+    pub transport: Option<String>,
     /// Authentication settings.
     pub auth: Option<RawProviderAuthConfig>,
     /// JSON path expressions.
@@ -403,4 +457,141 @@ pub struct RawProviderPathsConfig {
 pub struct RawProviderFormatsConfig {
     /// Timestamp format (`"rfc3339"`, `"unix"`, `"unix_ms"`).
     pub source_updated_at: Option<String>,
+}
+
+/// Raw oracle-specific asset configuration (under [oracles.assets.<id>]).
+///
+/// Provides feed definitions that are combined with shared asset identity
+/// from [assets.<id>].
+#[cfg_attr(feature = "config-toml", derive(Deserialize))]
+#[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct RawOracleAssetConfig {
+    /// Whether this oracle asset is enabled.
+    pub enabled: Option<bool>,
+    /// Provider feed definitions for this asset.
+    pub feeds: Option<Vec<RawOracleFeedConfig>>,
+}
+
+/// Raw feed configuration for an oracle asset (under [[oracles.assets.<id>.feeds]]).
+#[cfg_attr(feature = "config-toml", derive(Deserialize))]
+#[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct RawOracleFeedConfig {
+    /// Whether this feed is enabled.
+    pub enabled: Option<bool>,
+    /// Provider name from [oracles.providers].
+    pub provider: String,
+    /// Feed priority (higher = tried first).
+    pub priority: i32,
+    /// Provider-specific parameters.
+    pub params: Option<BTreeMap<String, String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Universal transport profile types (for [transports.http.<id>] and
+// [transports.webhook.<id>]).
+// ---------------------------------------------------------------------------
+
+/// Container for universal transport profile sections.
+///
+/// These are extracted from the TOML root by the loader and passed to the
+/// validator for transport reference resolution.
+#[derive(Clone, Debug, Default)]
+pub struct RawTransportsConfig {
+    /// Named HTTP transport profiles from [transports.http.<id>].
+    pub http: BTreeMap<String, RawTransportHttpProfile>,
+    /// Named webhook transport profiles from [transports.webhook.<id>].
+    pub webhook: BTreeMap<String, RawTransportWebhookProfile>,
+}
+
+/// An HTTP transport profile (from [transports.http.<id>]).
+#[cfg_attr(feature = "config-toml", derive(Deserialize))]
+#[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct RawTransportHttpProfile {
+    /// Optional base URL for HTTP clients sharing one upstream endpoint.
+    pub base_url: Option<String>,
+    /// User-Agent override for this profile.
+    pub user_agent: Option<String>,
+    /// Request timeout in seconds. 0 means use [http].request_timeout_secs.
+    pub timeout_secs: Option<u64>,
+    /// Maximum retries. 0 means use [http].max_retries.
+    pub max_retries: Option<u32>,
+    /// Initial retry backoff in milliseconds. 0 means use [http].retry_backoff_ms.
+    pub retry_base_ms: Option<u64>,
+}
+
+/// A webhook transport profile (from [transports.webhook.<id>]).
+#[cfg_attr(feature = "config-toml", derive(Deserialize))]
+#[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct RawTransportWebhookProfile {
+    /// Webhook destination URL (may use env expansion).
+    pub url: Option<String>,
+    /// HTTP method for webhook delivery.
+    pub method: Option<String>,
+    /// Authentication scheme: none, bearer, header.
+    pub auth_scheme: Option<String>,
+    /// Token used when auth_scheme = bearer.
+    pub token: Option<String>,
+    /// Header name used when auth_scheme = header.
+    pub auth_header: Option<String>,
+    /// Request timeout in seconds.
+    pub timeout_secs: Option<u64>,
+    /// Maximum retry attempts after the first delivery attempt.
+    pub max_retries: Option<u32>,
+    /// Initial retry backoff in milliseconds.
+    pub retry_base_ms: Option<u64>,
+    /// Custom HTTP headers.
+    pub headers: Option<BTreeMap<String, String>>,
+}
+
+/// Array-format event sink (from [[oracles.events.sinks]]).
+///
+/// This is the universal-config array-of-tables format that uses `id` and
+/// `type` instead of the map-key format.
+#[cfg_attr(feature = "config-toml", derive(Deserialize))]
+#[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct RawEventSinkArrayEntry {
+    /// Sink identifier.
+    pub id: String,
+    /// Sink kind: "log", "telegram", "webhook", or "table".
+    #[cfg_attr(feature = "config-toml", serde(alias = "type"))]
+    pub kind: String,
+    /// Whether this sink is enabled.
+    pub enabled: Option<bool>,
+    /// Log level for log sinks.
+    pub level: Option<String>,
+    /// Env var for Telegram bot token.
+    pub bot_token_env: Option<String>,
+    /// Env var for Telegram chat ID.
+    pub chat_id_env: Option<String>,
+    /// HTTP method for Telegram/webhook sinks.
+    pub method: Option<String>,
+    /// Telegram parse mode.
+    pub parse_mode: Option<String>,
+    /// Whether to disable Telegram link previews.
+    pub disable_web_page_preview: Option<bool>,
+    /// Message template for Telegram sinks.
+    pub message: Option<String>,
+    /// Env var for webhook URL.
+    pub url_env: Option<String>,
+    /// Custom HTTP headers for webhook sinks.
+    pub headers: Option<BTreeMap<String, String>>,
+    /// Webhook body configuration.
+    pub body: Option<RawWebhookBodyConfig>,
+    /// Webhook transport profile reference from [transports.webhook].
+    pub transport: Option<String>,
+    /// Direct URL override for webhook sinks.
+    pub url: Option<String>,
+    /// Token override for webhook sinks.
+    pub token: Option<String>,
+    /// Request timeout override in seconds. 0 means use transport profile.
+    pub timeout_secs: Option<u64>,
+    /// Maximum retries override. 0 means use transport profile.
+    pub max_retries: Option<u32>,
+    /// Initial retry backoff override in milliseconds. 0 means use transport profile.
+    pub retry_base_ms: Option<u64>,
 }

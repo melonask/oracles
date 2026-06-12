@@ -34,6 +34,7 @@ fn base_raw_config() -> RawConfig {
                     native_symbol: Some("ETH".to_owned()),
                     rpc_urls: None,
                     confirmations: None,
+                    derivation: None,
                 },
             );
             m
@@ -109,6 +110,7 @@ fn base_raw_config() -> RawConfig {
                         kind: "static".to_owned(),
                         method: None,
                         url_template: None,
+                        transport: None,
                         auth: None,
                         paths: None,
                         formats: None,
@@ -116,6 +118,9 @@ fn base_raw_config() -> RawConfig {
                 );
                 m
             },
+            asset_ids: None,
+            assets: None,
+            enabled: None,
         },
     }
 }
@@ -125,7 +130,7 @@ fn stale_after_must_be_at_least_refresh() {
     let mut raw = base_raw_config();
     raw.oracles.refresh_secs = 300;
     raw.oracles.stale_after_secs = 60;
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -138,7 +143,7 @@ fn stale_after_must_be_at_least_refresh() {
 fn refresh_secs_zero_is_rejected() {
     let mut raw = base_raw_config();
     raw.oracles.refresh_secs = 0;
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -166,7 +171,8 @@ fn disabled_asset_without_feeds_is_accepted() {
             feeds: Some(vec![]),
         },
     );
-    let result = resolve_config(raw).expect("disabled asset without feeds should be accepted");
+    let result = resolve_config(raw, RawTransportsConfig::default())
+        .expect("disabled asset without feeds should be accepted");
     let assets = result.assets;
     assert_eq!(assets.len(), 1);
     assert!(!assets[0].enabled);
@@ -186,7 +192,7 @@ fn events_record_false_with_outbox_mode_is_rejected() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -209,7 +215,7 @@ fn unknown_store_driver_is_rejected() {
             max_connections: Some(1),
         },
     );
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     assert!(
         result
@@ -256,7 +262,8 @@ fn custom_rate_columns_are_resolved() {
         write_mode: None,
         columns: Some(columns),
     });
-    let resolved = resolve_config(raw).expect("custom rate columns should resolve");
+    let resolved = resolve_config(raw, RawTransportsConfig::default())
+        .expect("custom rate columns should resolve");
     assert_eq!(resolved.oracles.table.columns.rate, "price_text");
     assert_eq!(resolved.oracles.table.columns.provider, "source");
     // Non-overridden columns keep their defaults.
@@ -281,7 +288,8 @@ fn custom_event_columns_are_resolved() {
         routes: None,
         sinks: None,
     });
-    let resolved = resolve_config(raw).expect("custom event columns should resolve");
+    let resolved = resolve_config(raw, RawTransportsConfig::default())
+        .expect("custom event columns should resolve");
     assert_eq!(resolved.events.columns.event_type, "kind");
     assert_eq!(resolved.events.columns.action, "disposition");
     // Non-overridden columns keep their defaults.
@@ -330,7 +338,8 @@ fn custom_outbox_columns_are_resolved() {
         request_timeout_secs: None,
         columns: Some(columns),
     });
-    let resolved = resolve_config(raw).expect("custom outbox columns should resolve");
+    let resolved = resolve_config(raw, RawTransportsConfig::default())
+        .expect("custom outbox columns should resolve");
     assert_eq!(resolved.outbox.columns.sink, "target");
     assert_eq!(resolved.outbox.columns.payload, "body_text");
     // Non-overridden columns keep their defaults.
@@ -348,7 +357,7 @@ fn unknown_column_key_is_rejected() {
         write_mode: None,
         columns: Some(columns),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -368,7 +377,7 @@ fn duplicate_column_names_are_rejected() {
         write_mode: None,
         columns: Some(columns),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -395,7 +404,7 @@ fn unknown_events_store_is_rejected() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -441,7 +450,7 @@ fn unknown_outbox_store_is_rejected() {
         request_timeout_secs: None,
         columns: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -475,7 +484,7 @@ fn different_events_store_is_rejected() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -532,7 +541,7 @@ fn different_outbox_store_is_rejected() {
         request_timeout_secs: None,
         columns: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -572,7 +581,7 @@ fn outbox_mode_with_record_anomalies_false_is_rejected() {
         bootstrap: None,
         consensus: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -603,6 +612,13 @@ fn unknown_event_type_in_route_is_rejected() {
             url_env: None,
             headers: None,
             body: None,
+            enabled: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
         },
     );
     let routes = vec![RawEventRouteConfig {
@@ -620,7 +636,7 @@ fn unknown_event_type_in_route_is_rejected() {
         routes: Some(routes),
         sinks: Some(sinks),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -647,6 +663,13 @@ fn valid_event_types_in_routes_are_accepted() {
             url_env: None,
             headers: None,
             body: None,
+            enabled: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
         },
     );
     let routes = vec![
@@ -682,7 +705,8 @@ fn valid_event_types_in_routes_are_accepted() {
         routes: Some(routes),
         sinks: Some(sinks),
     });
-    let resolved = resolve_config(raw).expect("valid event types should be accepted");
+    let resolved = resolve_config(raw, RawTransportsConfig::default())
+        .expect("valid event types should be accepted");
     assert_eq!(resolved.events.routes.len(), 5);
 }
 
@@ -709,6 +733,13 @@ fn telegram_method_get_is_rejected() {
             url_env: None,
             headers: None,
             body: None,
+            enabled: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
         },
     );
     let routes = vec![RawEventRouteConfig {
@@ -726,7 +757,7 @@ fn telegram_method_get_is_rejected() {
         routes: Some(routes),
         sinks: Some(sinks),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -744,6 +775,7 @@ fn webhook_method_delete_is_rejected() {
         "wh".to_owned(),
         RawEventSinkConfig {
             kind: "webhook".to_owned(),
+            enabled: None,
             level: None,
             bot_token_env: None,
             chat_id_env: None,
@@ -753,6 +785,12 @@ fn webhook_method_delete_is_rejected() {
             message: None,
             url_env: Some("WH_URL".to_owned()),
             headers: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
             body: Some(RawWebhookBodyConfig {
                 format: "json".to_owned(),
                 template: "{}".to_owned(),
@@ -774,7 +812,7 @@ fn webhook_method_delete_is_rejected() {
         routes: Some(routes),
         sinks: Some(sinks),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -792,6 +830,7 @@ fn webhook_body_format_xml_is_rejected() {
         "wh".to_owned(),
         RawEventSinkConfig {
             kind: "webhook".to_owned(),
+            enabled: None,
             level: None,
             bot_token_env: None,
             chat_id_env: None,
@@ -801,6 +840,12 @@ fn webhook_body_format_xml_is_rejected() {
             message: None,
             url_env: Some("WH_URL".to_owned()),
             headers: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
             body: Some(RawWebhookBodyConfig {
                 format: "xml".to_owned(),
                 template: "<root/>".to_owned(),
@@ -822,7 +867,7 @@ fn webhook_body_format_xml_is_rejected() {
         routes: Some(routes),
         sinks: Some(sinks),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -845,6 +890,7 @@ fn invalid_provider_timestamp_format_is_rejected() {
             kind: "http_json".to_owned(),
             method: Some("GET".to_owned()),
             url_template: Some("https://example.com/{asset}".to_owned()),
+            transport: None,
             auth: None,
             paths: None,
             formats: Some(RawProviderFormatsConfig {
@@ -852,7 +898,7 @@ fn invalid_provider_timestamp_format_is_rejected() {
             }),
         },
     );
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -885,7 +931,7 @@ fn disable_asset_consensus_action_is_rejected() {
             action: Some("disable_asset".to_owned()),
         }),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -925,7 +971,7 @@ fn last_observed_requires_events_enabled() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -961,7 +1007,7 @@ fn last_observed_requires_events_record() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -992,6 +1038,13 @@ fn table_sink_without_events_record_is_rejected() {
             url_env: None,
             headers: None,
             body: None,
+            enabled: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
         },
     );
     raw.oracles.events = Some(RawEventsConfig {
@@ -1005,7 +1058,7 @@ fn table_sink_without_events_record_is_rejected() {
         routes: None,
         sinks: Some(sinks),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1036,6 +1089,13 @@ fn invalid_log_sink_level_is_rejected() {
             url_env: None,
             headers: None,
             body: None,
+            enabled: None,
+            transport: None,
+            url: None,
+            token: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_base_ms: None,
         },
     );
     let routes = vec![RawEventRouteConfig {
@@ -1053,7 +1113,7 @@ fn invalid_log_sink_level_is_rejected() {
         routes: Some(routes),
         sinks: Some(sinks),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1074,8 +1134,11 @@ fn zero_request_timeout_is_rejected() {
         request_timeout_secs: Some(0),
         max_retries: None,
         retry_backoff_ms: None,
+        bind: None,
+        prefix: None,
+        api_key: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1121,7 +1184,7 @@ fn zero_outbox_dispatch_interval_is_rejected() {
         request_timeout_secs: None,
         columns: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1144,7 +1207,7 @@ fn zero_store_connect_timeout_is_rejected() {
             max_connections: Some(1),
         },
     );
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1167,7 +1230,7 @@ fn zero_store_max_connections_is_rejected() {
             max_connections: Some(0),
         },
     );
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1190,12 +1253,13 @@ fn invalid_http_json_method_is_rejected() {
             kind: "http_json".to_owned(),
             method: Some("DELETE".to_owned()),
             url_template: Some("https://example.com/{asset}".to_owned()),
+            transport: None,
             auth: None,
             paths: None,
             formats: None,
         },
     );
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1235,7 +1299,7 @@ fn disable_asset_default_action_requires_events_enabled() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1271,7 +1335,7 @@ fn disable_asset_default_action_requires_events_record() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1307,7 +1371,7 @@ fn disable_asset_default_action_requires_record_anomalies() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1361,7 +1425,7 @@ fn disable_asset_asset_action_requires_events_enabled() {
         routes: None,
         sinks: None,
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1388,7 +1452,7 @@ fn postgres_max_connections_not_one_is_rejected() {
             max_connections: Some(10),
         },
     );
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1411,7 +1475,7 @@ fn identifier_starting_with_digit_is_rejected() {
         write_mode: None,
         columns: Some(columns),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1430,7 +1494,7 @@ fn sql_reserved_word_as_identifier_is_rejected() {
         write_mode: None,
         columns: Some(columns),
     });
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1456,7 +1520,7 @@ fn event_table_name_sql_reserved_word_is_rejected() {
     // This test validates that the config-level identifier validation
     // catches reserved words in event table names. Note: rate table names
     // are validated at store open time, not config resolution time.
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     // The event table name is not validated at config time (it's just a string
     // in the config), so this should pass config validation but would fail
     // at store open time. We test column names instead for config-level validation.

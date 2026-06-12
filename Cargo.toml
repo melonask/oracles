@@ -1,6 +1,6 @@
 [package]
 name = "oracles"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT"
@@ -16,6 +16,7 @@ config-toml = ["dep:serde", "dep:toml"]
 http-json = ["dep:serde_json", "dep:ureq"]
 sqlite = ["dep:rusqlite"]
 postgres = ["dep:postgres"]
+pg = ["postgres"]
 postgres-tls = ["postgres", "dep:postgres-native-tls", "dep:native-tls"]
 telegram = ["http-json"]
 webhook = ["http-json"]
@@ -51,3 +52,6 @@ todo = "deny"
 dbg_macro = "deny"
 manual_ok_or = "warn"
 large_enum_variant = "warn"
+
+[dev-dependencies]
+tempfile = "3"

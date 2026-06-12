@@ -12,6 +12,14 @@
 # - secrets are read from environment variables
 # - suspicious rates are quarantined before they become active
 # - notifications are event sinks, not validation logic
+#
+# Universal config model:
+# - Root-level sections [stores], [http], [chains], [assets], [log],
+#   [transports.http], and [transports.webhook] are shared reusable profiles.
+# - Package-specific behavior lives under [oracles].
+# - Unrelated package namespaces (e.g., [ladon], [pano], [bria]) are silently
+#   ignored when using this file as a universal merged config.
+# - Unknown fields within [oracles] are rejected with clear errors.
 
 # Configuration schema version.
 # Increase this only when the config format changes in a backward-incompatible way.
@@ -22,7 +30,6 @@ version = 1
 # ─────────────────────────────────────────────────────────────────────────────
 
 [log]
-
 # Minimum log level.
 # Allowed values: trace, debug, info, warn, error
 level = "info"
@@ -42,7 +49,6 @@ format = "json"
 # to these stores, but it should not rely on local memory for correctness.
 
 [stores.oracles]
-
 # Database driver.
 # Allowed values: sqlite, postgres
 driver = "sqlite"
@@ -86,7 +92,6 @@ max_connections = 1
 # ─────────────────────────────────────────────────────────────────────────────
 
 [http]
-
 # User-Agent sent to external HTTP providers.
 user_agent = "oracles/0.1"
 
@@ -101,6 +106,48 @@ max_retries = 3
 retry_backoff_ms = 500
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Universal transport profiles (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Transport profiles define reusable connection defaults. Providers reference
+# HTTP profiles via `transport = "name"`. Event sinks reference webhook
+# profiles via `transport = "name"`.
+
+# [transports.http.default]
+# Optional base URL for HTTP clients that can share one upstream endpoint.
+# base_url = ""
+# User-Agent override for this HTTP profile (empty = use [http].user_agent).
+# user_agent = ""
+# Request timeout in seconds (0 = use [http].request_timeout_secs).
+# timeout_secs = 30
+# Maximum retries (0 = use [http].max_retries).
+# max_retries = 3
+# Initial retry backoff in ms (0 = use [http].retry_backoff_ms).
+# retry_base_ms = 500
+
+# [transports.webhook.ops]
+# Webhook destination URL (may use ${VAR} or ${VAR:-default} expansion).
+# url = "${OPS_WEBHOOK_URL:-}"
+# HTTP method for webhook delivery.
+# method = "POST"
+# Authentication scheme: none, bearer, or header.
+# auth_scheme = "bearer"
+# Token used when auth_scheme = bearer.
+# token = "${OPS_WEBHOOK_TOKEN:-}"
+# Header name used when auth_scheme = header.
+# auth_header = "Authorization"
+# Request timeout in seconds.
+# timeout_secs = 10
+# Maximum retry attempts.
+# max_retries = 3
+# Initial retry backoff in milliseconds.
+# retry_base_ms = 500
+
+# [transports.webhook.ops.headers]
+# Default content-type header for JSON webhook deliveries.
+# content_type = "application/json"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Chains
 # ─────────────────────────────────────────────────────────────────────────────
 #
@@ -111,7 +158,6 @@ retry_backoff_ms = 500
 # provider integrations.
 
 [chains.eth]
-
 # Chain family.
 # Allowed examples: evm, solana, bitcoin
 family = "evm"
@@ -130,7 +176,6 @@ rpc_urls = ["https://eth.llamarpc.com"]
 confirmations = 12
 
 [chains.base]
-
 # Chain family.
 family = "evm"
 
@@ -147,7 +192,6 @@ rpc_urls = ["https://mainnet.base.org"]
 confirmations = 12
 
 [chains.solana]
-
 # Chain family.
 family = "solana"
 
@@ -178,10 +222,13 @@ confirmations = 32
 #
 # Do not rely only on ticker symbols, because the same symbol can exist on
 # multiple chains.
+#
+# Shared assets provide identity metadata (chain, symbol, decimals, etc.).
+# Oracle-specific feed configuration lives under [oracles.assets.<id>].
+# When [oracles].asset_ids is set, only those shared assets are resolved.
 
 [assets.eth]
-
-# Whether this asset is enabled.
+# Whether this shared asset definition is active.
 enabled = true
 
 # Chain ID from the [chains] section.
@@ -201,7 +248,6 @@ kind = "native"
 decimals = 18
 
 [assets.eth.x402]
-
 # Whether x402/payment metadata is enabled for this asset.
 enabled = true
 
@@ -213,57 +259,7 @@ asset_address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
 # Allowed examples: permit2, spl
 transfer_method = "permit2"
 
-[[assets.eth.feeds]]
-
-# Whether this feed is enabled.
-enabled = true
-
-# Provider ID from [oracles.providers].
-provider = "diadata"
-
-# Feed priority.
-# Higher values are tried first when selection = "priority".
-priority = 100
-
-# Provider-specific parameters.
-# These values are substituted into the provider URL/path templates.
-params = { blockchain = "Ethereum", address = "0x0000000000000000000000000000000000000000" }
-
-[[assets.eth.feeds]]
-
-# Whether this feed is enabled.
-enabled = true
-
-# Provider ID from [oracles.providers].
-provider = "coingecko_coin"
-
-# Lower-priority fallback feed.
-priority = 50
-
-# Provider-specific parameters.
-# CoinGecko coin IDs are not always the same as symbols.
-params = { coin_id = "ethereum" }
-
-[assets.eth.safety]
-
-# Whether asset-specific safety overrides are enabled.
-enabled = true
-
-# Maximum allowed percentage change between accepted updates.
-max_change_pct = "50"
-
-# Optional absolute minimum accepted rate.
-min_rate = "10"
-
-# Optional absolute maximum accepted rate.
-max_rate = "100000"
-
-# Action when this asset fails a safety check.
-# Allowed values: alert, quarantine, reject, disable_asset
-action = "quarantine"
-
 [assets.usdc_base]
-
 # Whether this asset is enabled.
 enabled = true
 
@@ -286,7 +282,6 @@ contract = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 decimals = 6
 
 [assets.usdc_base.x402]
-
 # Whether x402/payment metadata is enabled for this asset.
 enabled = true
 
@@ -296,54 +291,7 @@ asset_address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 # Transfer method used by payment flows.
 transfer_method = "permit2"
 
-[[assets.usdc_base.feeds]]
-
-# Whether this feed is enabled.
-enabled = true
-
-# Provider ID from [oracles.providers].
-provider = "static"
-
-# Static rate is highest priority for this example.
-priority = 100
-
-# Static provider parameters.
-# `rate` is a string to avoid floating-point precision loss.
-params = { rate = "1.00000000" }
-
-[[assets.usdc_base.feeds]]
-
-# Whether this feed is enabled.
-enabled = true
-
-# Provider ID from [oracles.providers].
-provider = "coingecko_token"
-
-# Lower-priority fallback feed.
-priority = 50
-
-# Provider-specific parameters.
-params = { platform = "base", address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }
-
-[assets.usdc_base.safety]
-
-# Whether asset-specific safety overrides are enabled.
-enabled = true
-
-# Stablecoins should use tighter limits than volatile assets.
-max_change_pct = "5"
-
-# Optional absolute minimum accepted rate.
-min_rate = "0.90"
-
-# Optional absolute maximum accepted rate.
-max_rate = "1.10"
-
-# Action when this asset fails a safety check.
-action = "quarantine"
-
 [assets.sol]
-
 # Whether this asset is enabled.
 enabled = true
 
@@ -363,7 +311,6 @@ kind = "native"
 decimals = 9
 
 [assets.sol.x402]
-
 # Whether x402/payment metadata is enabled for this asset.
 enabled = true
 
@@ -373,44 +320,11 @@ asset_address = "So11111111111111111111111111111111111111112"
 # Transfer method used by payment flows.
 transfer_method = "spl"
 
-[[assets.sol.feeds]]
-
-# Whether this feed is enabled.
-enabled = true
-
-# Provider ID from [oracles.providers].
-provider = "static"
-
-# Feed priority.
-priority = 100
-
-# Static provider parameters.
-# `rate` is a string to avoid floating-point precision loss.
-params = { rate = "150.00" }
-
-[assets.sol.safety]
-
-# Whether asset-specific safety overrides are enabled.
-enabled = true
-
-# Maximum allowed percentage change between accepted updates.
-max_change_pct = "50"
-
-# Optional absolute minimum accepted rate.
-min_rate = "1"
-
-# Optional absolute maximum accepted rate.
-max_rate = "10000"
-
-# Action when this asset fails a safety check.
-action = "quarantine"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Oracles service
 # ─────────────────────────────────────────────────────────────────────────────
 
 [oracles]
-
 # Store ID from the [stores] section.
 store = "oracles"
 
@@ -450,8 +364,11 @@ fail_fast = false
 # - median:   fetch all successful feeds and store the median selected rate
 selection = "priority"
 
-[oracles.table]
+# Optional: restrict to specific shared assets by ID.
+# When set, only these assets from [assets] are resolved.
+# asset_ids = ["eth", "usdc_base", "sol"]
 
+[oracles.table]
 # Database table used for current accepted rates.
 name = "oracle_rates"
 
@@ -463,38 +380,17 @@ name = "oracle_rates"
 write_mode = "upsert"
 
 [oracles.table.columns]
-
-# Row primary key.
+# Column name overrides (all optional — defaults shown).
 id = "id"
-
-# Internal asset ID, such as eth, usdc_base, or sol.
 asset_id = "asset_id"
-
-# Internal chain ID, such as eth, base, or solana.
 chain_id = "chain_id"
-
-# CAIP-2 chain identifier, such as eip155:1.
 caip2 = "caip2"
-
-# Asset symbol, such as ETH, USDC, or SOL.
 symbol = "symbol"
-
-# Quote currency, such as USD.
 quote = "quote"
-
-# Provider ID that produced the accepted rate.
 provider = "provider"
-
-# Accepted decimal rate as a string.
 rate = "rate"
-
-# Timestamp reported by the provider, if available.
 source_updated_at = "source_updated_at"
-
-# Timestamp when this service fetched and accepted the rate.
 observed_at = "observed_at"
-
-# Timestamp when this service considers the stored rate stale.
 expires_at = "expires_at"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -507,7 +403,6 @@ expires_at = "expires_at"
 # Notifications are useful, but notifications alone are not security.
 
 [oracles.safety]
-
 # Whether safety checks are enabled globally.
 enabled = true
 
@@ -549,7 +444,6 @@ alert_cooldown_secs = 3600
 record_anomalies = true
 
 [oracles.safety.bootstrap]
-
 # What to do when no previous accepted rate exists.
 #
 # Allowed values:
@@ -559,7 +453,6 @@ record_anomalies = true
 missing_previous_rate = "accept"
 
 [oracles.safety.consensus]
-
 # Minimum number of successful feeds required before accepting a rate.
 # Use 1 for simple mode.
 # Use 2+ when you want stronger provider agreement.
@@ -589,7 +482,6 @@ action = "quarantine"
 # Event delivery is handled by sinks such as log, table, Telegram, and webhook.
 
 [oracles.events]
-
 # Whether event recording/routing is enabled.
 enabled = true
 
@@ -614,83 +506,41 @@ table = "oracle_events"
 sink_fail_fast = false
 
 [oracles.events.columns]
-
-# Unique event ID.
+# Column name overrides (all optional — defaults shown).
 id = "id"
-
-# Event type, such as oracle.rate_anomaly.
 event_type = "event_type"
-
-# Internal asset ID.
 asset_id = "asset_id"
-
-# Internal chain ID.
 chain_id = "chain_id"
-
-# Asset symbol.
 symbol = "symbol"
-
-# Quote currency.
 quote = "quote"
-
-# Provider ID.
 provider = "provider"
-
-# Previous accepted rate, if available.
 previous_rate = "previous_rate"
-
-# Candidate rate being evaluated.
 candidate_rate = "candidate_rate"
-
-# Percentage change between previous and candidate rate.
 change_pct = "change_pct"
-
-# Action taken by the safety engine.
 action = "action"
-
-# Reason code explaining why the event was emitted.
 reason = "reason"
-
-# Provider timestamp, if available.
 source_updated_at = "source_updated_at"
-
-# Local timestamp when the event was observed.
 observed_at = "observed_at"
 
+# Event routing rules: map event types to sink names.
 [[oracles.events.routes]]
-
-# Event type matched by this route.
 event = "oracle.rate_anomaly"
-
-# Sinks that should receive this event.
 sinks = ["ops_log"]
 
 [[oracles.events.routes]]
-
-# Event type matched by this route.
 event = "oracle.rate_quarantined"
-
-# Sinks that should receive this event.
 sinks = ["ops_log"]
 
 [[oracles.events.routes]]
-
-# Event type matched by this route.
 event = "oracle.rate_rejected"
-
-# Sinks that should receive this event.
 sinks = ["ops_log"]
 
 [[oracles.events.routes]]
-
-# Event type matched by this route.
 event = "oracle.provider_failed"
-
-# Sinks that should receive this event.
 sinks = ["ops_log"]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Outbox
+# Outbox (reliable delivery)
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # The outbox pattern is recommended for reliable notifications.
@@ -703,7 +553,6 @@ sinks = ["ops_log"]
 # in durable storage before attempting external delivery.
 
 [oracles.outbox]
-
 # Whether durable notification delivery is enabled.
 enabled = true
 
@@ -726,48 +575,33 @@ retry_backoff_secs = 30
 request_timeout_secs = 10
 
 [oracles.outbox.columns]
-
-# Unique outbox row ID.
+# Column name overrides (all optional — defaults shown).
 id = "id"
-
-# Related oracle event ID.
 event_id = "event_id"
-
-# Sink ID, such as ops_telegram.
 sink = "sink"
-
-# Serialized delivery payload.
 payload = "payload"
-
-# Current delivery status.
 status = "status"
-
-# Number of delivery attempts.
 attempts = "attempts"
-
-# Next time this delivery should be attempted.
 next_attempt_at = "next_attempt_at"
-
-# Timestamp when delivery succeeded.
 delivered_at = "delivered_at"
-
-# Last delivery error, if any.
 last_error = "last_error"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Event sinks
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# Sinks are configured in two formats:
+# 1. Map format: [oracles.events.sinks.<name>]
+# 2. Array format: [[oracles.events.sinks]] (universal config compatible)
+#
+# Both formats are supported. The array format uses `type` instead of `kind`
+# and supports `transport` refs to [transports.webhook] profiles.
 
 [oracles.events.sinks.ops_log]
-
-# Sink kind.
-# `log` writes events to the application log.
 kind = "log"
-
-# Log level used for this sink.
 level = "warn"
 
-# Telegram and webhook sinks require the `full` feature set:
+# Telegram and webhook sinks require feature flags:
 #
 # | Sink     | Cargo feature      | Default? |
 # |----------|--------------------|----------|
@@ -785,33 +619,12 @@ level = "warn"
 #   cargo install oracles --features full
 
 # [oracles.events.sinks.ops_telegram]
-#
-# # Sink kind.
-# # `telegram` sends messages through the Telegram Bot API.
 # kind = "telegram"
-#
-# # Telegram bot token environment variable.
-# # Do not store the actual token in Config.toml.
 # bot_token_env = "TELEGRAM_BOT_TOKEN"
-#
-# # Telegram chat ID environment variable.
-# # Do not store the actual chat ID in Config.toml if it is sensitive.
 # chat_id_env = "TELEGRAM_CHAT_ID"
-#
-# # HTTP method.
-# # POST is preferred over GET because messages and parameters are not placed in
-# # the URL query string.
 # method = "POST"
-#
-# # Optional Telegram parse mode.
-# # Allowed examples: Markdown, MarkdownV2, HTML
 # parse_mode = "Markdown"
-#
-# # Whether Telegram should disable link previews.
 # disable_web_page_preview = true
-#
-# # Message template.
-# # Placeholders are filled from the oracle event.
 # message = """
 # *Oracle anomaly detected*
 #
@@ -825,37 +638,16 @@ level = "warn"
 # Reason: `{reason}`
 # Observed at: `{observed_at}`
 # """
-#
+
 # [oracles.events.sinks.ops_webhook]
-#
-# # Sink kind.
-# # `webhook` sends an HTTP request to an operator-defined URL.
 # kind = "webhook"
-#
-# # Webhook URL environment variable.
-# # Use this instead of storing secret webhook URLs in Config.toml.
 # url_env = "ORACLES_OPS_WEBHOOK_URL"
-#
-# # HTTP method.
-# # Currently only POST is implemented by the webhook sink.
 # method = "POST"
-#
 # [oracles.events.sinks.ops_webhook.headers]
-#
-# # Content type sent to the webhook.
 # content-type = "application/json"
-#
-# # Authorization header.
-# # The token is read from an environment variable.
 # authorization = "Bearer ${ORACLES_OPS_WEBHOOK_TOKEN}"
-#
 # [oracles.events.sinks.ops_webhook.body]
-#
-# # Body format.
-# # Allowed values: json, text
 # format = "json"
-#
-# # JSON body template.
 # template = """
 # {
 #   "event": "{event_type}",
@@ -879,16 +671,15 @@ level = "warn"
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Providers define reusable fetching/parsing behavior.
-# Assets attach to providers through [[assets.<asset_id>.feeds]].
+# Assets attach to providers through feeds under [oracles.assets.<id>]
+# or through [[assets.<id>.feeds]].
 
 [oracles.providers.static]
-
 # Provider adapter kind.
 # `static` reads params.rate directly from an asset feed.
 kind = "static"
 
 [oracles.providers.diadata]
-
 # Provider adapter kind.
 # `http_json` means the service makes an HTTP request and parses a JSON response.
 kind = "http_json"
@@ -900,8 +691,10 @@ method = "GET"
 # Values from feed params are substituted into placeholders.
 url_template = "https://api.diadata.org/v1/assetQuotation/{blockchain}/{address}"
 
-[oracles.providers.diadata.paths]
+# Optional: reference a universal HTTP transport profile.
+# transport = "default"
 
+[oracles.providers.diadata.paths]
 # JSON path to the decimal rate in the response.
 rate = "Price"
 
@@ -909,13 +702,11 @@ rate = "Price"
 source_updated_at = "Time"
 
 [oracles.providers.diadata.formats]
-
 # Format of the provider timestamp.
 # Allowed examples: rfc3339, unix, unix_ms
 source_updated_at = "rfc3339"
 
 [oracles.providers.coingecko_coin]
-
 # Provider adapter kind.
 kind = "http_json"
 
@@ -927,7 +718,6 @@ method = "GET"
 url_template = "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies={quote_lower}&include_last_updated_at=true"
 
 [oracles.providers.coingecko_coin.auth]
-
 # Header name used for the API key.
 header = "x-cg-demo-api-key"
 
@@ -936,10 +726,9 @@ header = "x-cg-demo-api-key"
 # Runtime note:
 # Feeds using this provider require COINGECKO_API_KEY to be set.
 # For a no-secret local test, disable CoinGecko feeds or use static feeds.
-value_env = "COINGECKO_API_KEY" # demo key for test `CG-RafJRjawreuHsr5SMPnAyjcL`
+value_env = "COINGECKO_API_KEY"
 
 [oracles.providers.coingecko_coin.paths]
-
 # JSON path to the decimal rate in the response.
 rate = "{coin_id}.{quote_lower}"
 
@@ -947,12 +736,10 @@ rate = "{coin_id}.{quote_lower}"
 source_updated_at = "{coin_id}.last_updated_at"
 
 [oracles.providers.coingecko_coin.formats]
-
 # Format of the provider timestamp.
 source_updated_at = "unix"
 
 [oracles.providers.coingecko_token]
-
 # Provider adapter kind.
 kind = "http_json"
 
@@ -964,7 +751,6 @@ method = "GET"
 url_template = "https://api.coingecko.com/api/v3/simple/token_price/{platform}?contract_addresses={address_lower}&vs_currencies={quote_lower}&include_last_updated_at=true"
 
 [oracles.providers.coingecko_token.auth]
-
 # Header name used for the API key.
 header = "x-cg-demo-api-key"
 
@@ -976,7 +762,6 @@ header = "x-cg-demo-api-key"
 value_env = "COINGECKO_API_KEY"
 
 [oracles.providers.coingecko_token.paths]
-
 # JSON path to the decimal rate in the response.
 rate = "{address_lower}.{quote_lower}"
 
@@ -984,6 +769,59 @@ rate = "{address_lower}.{quote_lower}"
 source_updated_at = "{address_lower}.last_updated_at"
 
 [oracles.providers.coingecko_token.formats]
-
 # Format of the provider timestamp.
 source_updated_at = "unix"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Oracle-specific asset feeds
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Feeds can be defined two ways:
+# 1. On the shared asset: [[assets.<id>.feeds]]
+# 2. Under the oracles namespace: [[oracles.assets.<id>.feeds]] (recommended
+#    for universal config because it keeps feed logic package-local)
+#
+# When [oracles.assets.<id>] is present, its feeds are used instead of
+# shared [[assets.<id>.feeds]]. The shared [assets.<id>] still provides
+# identity metadata (chain, symbol, decimals).
+
+[oracles.assets.eth]
+enabled = true
+
+[[oracles.assets.eth.feeds]]
+enabled = true
+provider = "diadata"
+priority = 100
+params = { blockchain = "Ethereum", address = "0x0000000000000000000000000000000000000000" }
+
+[[oracles.assets.eth.feeds]]
+enabled = true
+provider = "coingecko_coin"
+priority = 50
+params = { coin_id = "ethereum" }
+
+
+[oracles.assets.usdc_base]
+enabled = true
+
+[[oracles.assets.usdc_base.feeds]]
+enabled = true
+provider = "static"
+priority = 100
+params = { rate = "1.00000000" }
+
+[[oracles.assets.usdc_base.feeds]]
+enabled = true
+provider = "coingecko_token"
+priority = 50
+params = { platform = "base", address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }
+
+
+[oracles.assets.sol]
+enabled = true
+
+[[oracles.assets.sol.feeds]]
+enabled = true
+provider = "coingecko_coin"
+priority = 100
+params = { coin_id = "solana" }

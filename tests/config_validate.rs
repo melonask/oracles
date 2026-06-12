@@ -3,6 +3,7 @@
 
 use oracles::config::raw::{
     RawAssetConfig, RawConfig, RawFeedConfig, RawOraclesConfig, RawProviderConfig, RawStoreConfig,
+    RawTransportsConfig,
 };
 use oracles::config::validate::resolve_config;
 use std::collections::BTreeMap;
@@ -28,6 +29,7 @@ fn missing_chain_reference_fails_validation() {
             kind: "static".to_owned(),
             method: None,
             url_template: None,
+            transport: None,
             auth: None,
             paths: None,
             formats: None,
@@ -80,10 +82,13 @@ fn missing_chain_reference_fails_validation() {
             events: None,
             outbox: None,
             providers,
+            asset_ids: None,
+            assets: None,
+            enabled: None,
         },
     };
 
-    let result = resolve_config(raw);
+    let result = resolve_config(raw, RawTransportsConfig::default());
     assert!(result.is_err());
 
     let err = result.unwrap_err().to_string();

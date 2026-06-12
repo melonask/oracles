@@ -3,8 +3,6 @@ name: oracles
 description: Oracles is a Rust service and library for fetching cryptocurrency exchange rates from configured providers, validating candidate rates, and storing accepted rates in SQLite or PostgreSQL.
 ---
 
-> **Oracles** — Where Prophecy Meets Crypto
-
 `oracles` is a Rust service and library for fetching cryptocurrency exchange rates from configured providers, validating candidate rates, and storing accepted rates in SQLite or PostgreSQL.
 
 It is designed for payment, balance, billing, x402, and automation systems that need fresh fiat-denominated rates without making the oracle process itself the source of truth.
@@ -46,6 +44,7 @@ Default features: `cli`, `config-toml`, `http-json`, `sqlite`.
 | `http-json` | yes | Enables HTTP JSON providers using `ureq` and `serde_json`. |
 | `sqlite` | yes | Enables the SQLite store backend. |
 | `postgres` | no | Enables the PostgreSQL store backend. |
+| `pg` | no | Alias for `postgres`. Enables the PostgreSQL store backend. |
 | `postgres-tls` | no | Enables PostgreSQL TLS support. Implies `postgres`. |
 | `telegram` | no | Enables the Telegram event sink. Implies `http-json` for the shared HTTP client dependency. |
 | `webhook` | no | Enables the webhook event sink. Implies `http-json` for the shared HTTP client dependency. |
@@ -73,6 +72,10 @@ git clone https://github.com/melonask/oracles.git
 cd oracles
 cargo test --all-targets --all-features
 ```
+
+End-to-end coverage is in-process: the integration tests exercise config parsing,
+provider resolution, safety decisions, SQLite storage, event rendering, and outbox
+dispatch without requiring external services.
 
 ## Quick start
 
@@ -192,14 +195,90 @@ version = 1
 [log]
 [stores.<id>]
 [http]
+[transports.http.<id>]     # optional reusable HTTP client profiles
+[transports.webhook.<id>]  # optional reusable webhook profiles
 [chains.<id>]
-[assets.<id>]
+[assets.<id>]              # shared asset identity
 [oracles]
 [oracles.table]
 [oracles.safety]
 [oracles.events]
 [oracles.outbox]
 [oracles.providers.<id>]
+[oracles.assets.<id>]      # oracle-specific feed configuration
+```
+
+### Universal config model
+
+`oracles` supports loading a merged universal `Config.toml` that may contain
+sections for other packages (`[ladon]`, `[pano]`, `[bria]`, `[meta]`,
+`[runtime]`, `[paths]`, `[objects]`, `transports.amqp`). These unrelated
+namespaces are silently ignored.
+
+Unknown fields inside `[oracles]` are **rejected** with clear error messages.
+All shared sections are fully validated.
+
+### Transport profiles
+
+Providers can reference reusable HTTP transport profiles from
+`[transports.http.<id>]` via the `transport` field:
+
+```toml
+[transports.http.default]
+timeout_secs = 30
+max_retries = 3
+
+[oracles.providers.coingecko_coin]
+kind = "http_json"
+transport = "default"
+url_template = "https://api.coingecko.com/api/v3/..."
+```
+
+Event sinks can reference reusable webhook transport profiles from
+`[transports.webhook.<id>]` via the `transport` field:
+
+```toml
+[transports.webhook.ops]
+url = "${OPS_WEBHOOK_URL:-}"
+method = "POST"
+timeout_secs = 10
+
+[[oracles.events.sinks]]
+id = "ops-webhook"
+type = "webhook"
+transport = "ops"
+```
+
+Reference resolution:
+- `transport = "default"` in a provider resolves `[transports.http.default]`.
+- `transport = "ops"` in a webhook sink resolves `[transports.webhook.ops]`.
+- Unknown transport references fail with actionable errors.
+- Package-local values may override shared profile values.
+
+### Oracle-specific assets
+
+Feeds can be configured under `[oracles.assets.<id>]` instead of on the shared
+`[[assets.<id>.feeds]]`. This keeps oracle-specific feed logic package-local
+while the shared `[assets.<id>]` provides identity metadata:
+
+```toml
+[oracles.assets.eth]
+enabled = true
+
+[[oracles.assets.eth.feeds]]
+enabled = true
+provider = "coingecko_coin"
+priority = 100
+params = { coin_id = "ethereum" }
+```
+
+When `[oracles.assets.<id>]` is present, its feeds are used instead of
+shared `[[assets.<id>.feeds]]`. The `asset_ids` field in `[oracles]` can
+restrict to specific shared assets:
+
+```toml
+[oracles]
+asset_ids = ["eth", "usdc_base", "sol"]
 ```
 
 Unknown config fields are rejected by the raw TOML deserializer. Table and column names are validated as unquoted SQL identifiers: they must start with a letter or underscore and contain only ASCII letters, digits, and underscores. Common SQL reserved words are rejected.
@@ -1025,7 +1104,3 @@ Core traits:
 - `store::RateStore`
 - `store::OutboxStore`
 - `events::sinks::EventSink`
-
-## License
-
-MIT

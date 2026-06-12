@@ -12,6 +12,11 @@ pub use self::args::parse_args;
 pub fn run() -> crate::error::Result<()> {
     let args = args::parse_args()?;
 
+    if args.ping {
+        println!("pong");
+        return Ok(());
+    }
+
     let config = crate::config::load_config(&args.config_path)?;
 
     // Initialise the global logger from resolved config, optionally overridden

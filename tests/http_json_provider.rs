@@ -52,6 +52,7 @@ fn diadata_provider() -> ResolvedProvider {
         kind: ProviderKind::HttpJson,
         method: Some("GET".to_owned()),
         url_template: Some("https://api.diadata.org/v1/assetQuotation/Ethereum/0x0000000000000000000000000000000000000000".to_owned()),
+        transport: None,
         auth: None,
         rate_path: Some("Price".to_owned()),
         source_updated_at_path: Some("Time".to_owned()),
@@ -68,6 +69,7 @@ fn coingecko_provider() -> ResolvedProvider {
             "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
                 .to_owned(),
         ),
+        transport: None,
         auth: None,
         rate_path: Some("ethereum.usd".to_owned()),
         source_updated_at_path: Some("ethereum.last_updated_at".to_owned()),
