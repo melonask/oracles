@@ -17,7 +17,7 @@
 # - Root-level sections [stores], [http], [chains], [assets], [log],
 #   [transports.http], and [transports.webhook] are shared reusable profiles.
 # - Package-specific behavior lives under [oracles].
-# - Unrelated package namespaces (e.g., [ladon], [pano], [bria]) are silently
+# - Unrelated package namespaces (e.g., [artur], [bria], [ladon], [pano]) are silently
 #   ignored when using this file as a universal merged config.
 # - Unknown fields within [oracles] are rejected with clear errors.
 
@@ -93,7 +93,7 @@ max_connections = 1
 
 [http]
 # User-Agent sent to external HTTP providers.
-user_agent = "oracles/0.1"
+user_agent = "oracles/0.3"
 
 # Maximum time to wait for one HTTP request.
 request_timeout_secs = 15
@@ -590,14 +590,11 @@ last_error = "last_error"
 # Event sinks
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Sinks are configured in two formats:
-# 1. Map format: [oracles.events.sinks.<name>]
-# 2. Array format: [[oracles.events.sinks]] (universal config compatible)
-#
-# Both formats are supported. The array format uses `type` instead of `kind`
-# and supports `transport` refs to [transports.webhook] profiles.
+# Sinks use canonical universal array entries. Every sink requires an `id` and
+# `kind`; `transport` may reference [transports.webhook] profiles.
 
-[oracles.events.sinks.ops_log]
+[[oracles.events.sinks]]
+id = "ops_log"
 kind = "log"
 level = "warn"
 
@@ -618,53 +615,6 @@ level = "warn"
 #
 #   cargo install oracles --features full
 
-# [oracles.events.sinks.ops_telegram]
-# kind = "telegram"
-# bot_token_env = "TELEGRAM_BOT_TOKEN"
-# chat_id_env = "TELEGRAM_CHAT_ID"
-# method = "POST"
-# parse_mode = "Markdown"
-# disable_web_page_preview = true
-# message = """
-# *Oracle anomaly detected*
-#
-# Asset: `{asset_id}`
-# Symbol: `{symbol}`
-# Provider: `{provider}`
-# Previous rate: `{previous_rate} {quote}`
-# Candidate rate: `{candidate_rate} {quote}`
-# Change: `{change_pct}%`
-# Action: `{action}`
-# Reason: `{reason}`
-# Observed at: `{observed_at}`
-# """
-
-# [oracles.events.sinks.ops_webhook]
-# kind = "webhook"
-# url_env = "ORACLES_OPS_WEBHOOK_URL"
-# method = "POST"
-# [oracles.events.sinks.ops_webhook.headers]
-# content-type = "application/json"
-# authorization = "Bearer ${ORACLES_OPS_WEBHOOK_TOKEN}"
-# [oracles.events.sinks.ops_webhook.body]
-# format = "json"
-# template = """
-# {
-#   "event": "{event_type}",
-#   "asset_id": "{asset_id}",
-#   "chain_id": "{chain_id}",
-#   "symbol": "{symbol}",
-#   "quote": "{quote}",
-#   "provider": "{provider}",
-#   "previous_rate": "{previous_rate}",
-#   "candidate_rate": "{candidate_rate}",
-#   "change_pct": "{change_pct}",
-#   "action": "{action}",
-#   "reason": "{reason}",
-#   "source_updated_at": "{source_updated_at}",
-#   "observed_at": "{observed_at}"
-# }
-# """
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Oracle providers

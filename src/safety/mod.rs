@@ -1,20 +1,8 @@
 use crate::config::{BootstrapAction, ResolvedAsset, ResolvedSafetyConfig};
-use crate::domain::{
-    CandidateRate, Decision, EventAction, EventReason, EventType, OracleEvent, RateRecord,
-};
+use crate::domain::{CandidateRate, Decision, EventAction, EventReason, OracleEvent, RateRecord};
 use crate::error::Result;
 use rust_decimal::Decimal;
 use time::OffsetDateTime;
-
-/// Map an [`EventAction`] to the corresponding [`EventType`].
-fn event_type_for_action(action: &EventAction) -> EventType {
-    match action {
-        EventAction::Alert => EventType::RateAnomaly,
-        EventAction::Quarantine => EventType::RateQuarantined,
-        EventAction::Reject => EventType::RateRejected,
-        EventAction::DisableAsset => EventType::RateRejected,
-    }
-}
 
 /// The safety engine that evaluates candidate rates against configured rules.
 ///
@@ -186,7 +174,7 @@ impl SafetyEngine {
 
         if spread_pct > self.config.consensus.max_provider_spread_pct {
             let event = OracleEvent {
-                event_type: event_type_for_action(&self.config.consensus.action),
+                event_type: self.config.consensus.action.event_type(),
                 asset_id: first.asset_id.clone(),
                 chain_id: Some(first.chain_id.clone()),
                 symbol: first.symbol.clone(),
@@ -205,7 +193,7 @@ impl SafetyEngine {
                 EventAction::Alert => {
                     let expires_at = first.observed_at + self.config.stale_after;
                     Decision::Alert {
-                        record: RateRecord {
+                        record: Box::new(RateRecord {
                             asset_id: first.asset_id.clone(),
                             chain_id: first.chain_id.clone(),
                             caip2: first.caip2.clone(),
@@ -216,8 +204,8 @@ impl SafetyEngine {
                             source_updated_at: first.source_updated_at,
                             observed_at: first.observed_at,
                             expires_at,
-                        },
-                        event: Box::new(event),
+                        }),
+                        event,
                     }
                 }
                 EventAction::Quarantine => Decision::Quarantine(event),
@@ -246,7 +234,7 @@ impl SafetyEngine {
             .unwrap_or_else(|| self.config.default_action.clone());
 
         let event = OracleEvent {
-            event_type: event_type_for_action(&action),
+            event_type: action.event_type(),
             asset_id: candidate.asset_id.clone(),
             chain_id: Some(candidate.chain_id.clone()),
             symbol: candidate.symbol.clone(),
@@ -265,7 +253,7 @@ impl SafetyEngine {
             EventAction::Alert => {
                 let expires_at = candidate.observed_at + self.config.stale_after;
                 Decision::Alert {
-                    record: RateRecord {
+                    record: Box::new(RateRecord {
                         asset_id: candidate.asset_id.clone(),
                         chain_id: candidate.chain_id.clone(),
                         caip2: candidate.caip2.clone(),
@@ -276,8 +264,8 @@ impl SafetyEngine {
                         source_updated_at: candidate.source_updated_at,
                         observed_at: candidate.observed_at,
                         expires_at,
-                    },
-                    event: Box::new(event),
+                    }),
+                    event,
                 }
             }
             EventAction::Quarantine => Decision::Quarantine(event),

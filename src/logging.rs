@@ -1,6 +1,6 @@
 //! Minimal, zero-dependency logger with JSON, Pretty, and Compact formats.
 //!
-//! Does not use external logging crates. Configured via [`init_logger`] and
+//! Does not use external logging crates. Configured via [`crate::logging::init_logger`] and
 //! invoked through the convenience macros: `trace!`, `debug!`, `info!`,
 //! `warn!`, `error!`.
 

@@ -13,16 +13,6 @@ use crate::store::RateStore;
 use std::sync::Arc;
 use time::OffsetDateTime;
 
-/// Map an [`EventAction`] to the corresponding [`EventType`].
-fn event_type_for_action(action: &EventAction) -> EventType {
-    match action {
-        EventAction::Alert => EventType::RateAnomaly,
-        EventAction::Quarantine => EventType::RateQuarantined,
-        EventAction::Reject => EventType::RateRejected,
-        EventAction::DisableAsset => EventType::RateRejected,
-    }
-}
-
 /// The core oracle engine that orchestrates rate fetching, safety evaluation,
 /// and persistence.
 ///
@@ -271,7 +261,7 @@ where
                         == BootstrapAction::RequireMultipleProviders
                 {
                     let action = self.config.safety.default_action.clone();
-                    let event_type = event_type_for_action(&action);
+                    let event_type = action.event_type();
                     let event = OracleEvent {
                         event_type,
                         asset_id: candidate.asset_id.clone(),
@@ -291,7 +281,7 @@ where
                         EventAction::Alert => {
                             let expires_at = candidate.observed_at + self.config.safety.stale_after;
                             Decision::Alert {
-                                record: RateRecord {
+                                record: Box::new(RateRecord {
                                     asset_id: candidate.asset_id.clone(),
                                     chain_id: candidate.chain_id.clone(),
                                     caip2: candidate.caip2.clone(),
@@ -302,8 +292,8 @@ where
                                     source_updated_at: candidate.source_updated_at,
                                     observed_at: candidate.observed_at,
                                     expires_at,
-                                },
-                                event: Box::new(event),
+                                }),
+                                event,
                             }
                         }
                         EventAction::Quarantine => Decision::Quarantine(event),
@@ -389,7 +379,7 @@ where
                     )));
                 };
                 let action = self.config.safety.default_action.clone();
-                let event_type = event_type_for_action(&action);
+                let event_type = action.event_type();
                 let event = OracleEvent {
                     event_type,
                     asset_id: first.asset_id.clone(),
@@ -409,7 +399,7 @@ where
                     EventAction::Alert => {
                         let expires_at = first.observed_at + self.config.safety.stale_after;
                         Decision::Alert {
-                            record: RateRecord {
+                            record: Box::new(RateRecord {
                                 asset_id: first.asset_id.clone(),
                                 chain_id: first.chain_id.clone(),
                                 caip2: first.caip2.clone(),
@@ -420,8 +410,8 @@ where
                                 source_updated_at: first.source_updated_at,
                                 observed_at: first.observed_at,
                                 expires_at,
-                            },
-                            event: Box::new(event),
+                            }),
+                            event,
                         }
                     }
                     EventAction::Quarantine => Decision::Quarantine(event),
@@ -587,7 +577,7 @@ where
                     )));
                 };
                 let action = self.config.safety.default_action.clone();
-                let event_type = event_type_for_action(&action);
+                let event_type = action.event_type();
                 let event = OracleEvent {
                     event_type,
                     asset_id: first.asset_id.clone(),
@@ -607,7 +597,7 @@ where
                     EventAction::Alert => {
                         let expires_at = first.observed_at + self.config.safety.stale_after;
                         Decision::Alert {
-                            record: RateRecord {
+                            record: Box::new(RateRecord {
                                 asset_id: first.asset_id.clone(),
                                 chain_id: first.chain_id.clone(),
                                 caip2: first.caip2.clone(),
@@ -618,8 +608,8 @@ where
                                 source_updated_at: first.source_updated_at,
                                 observed_at: first.observed_at,
                                 expires_at,
-                            },
-                            event: Box::new(event),
+                            }),
+                            event,
                         }
                     }
                     EventAction::Quarantine => Decision::Quarantine(event),
@@ -763,18 +753,27 @@ where
 
             let results: std::sync::Mutex<Vec<(usize, Result<CandidateRate>)>> =
                 std::sync::Mutex::new(Vec::new());
-            let active = std::sync::atomic::AtomicUsize::new(0);
+            let permits = std::sync::Mutex::new(max_concurrent);
+            let permit_available = std::sync::Condvar::new();
 
             std::thread::scope(|scope| {
                 for (idx, provider, feed, provider_config) in &fetch_items {
-                    // Wait for a slot (bounded concurrency via spin-wait).
-                    while active.load(std::sync::atomic::Ordering::Acquire) >= max_concurrent {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    let mut available = match permits.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    while *available == 0 {
+                        available = match permit_available.wait(available) {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
                     }
-                    active.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    *available -= 1;
+                    drop(available);
 
                     let results = &results;
-                    let active = &active;
+                    let permits = &permits;
+                    let permit_available = &permit_available;
                     let provider = Arc::clone(provider);
                     let feed = feed.clone();
                     let provider_config = provider_config.clone();
@@ -784,11 +783,18 @@ where
 
                     scope.spawn(move || {
                         let result = provider.fetch(asset_ref, &feed, &provider_config, ctx_ref);
-                        // Lock is infallible unless a sibling thread panicked.
-                        if let Ok(mut guard) = results.lock() {
-                            guard.push((idx, result));
-                        }
-                        active.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                        let mut guard = match results.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        guard.push((idx, result));
+                        drop(guard);
+                        let mut available = match permits.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        *available += 1;
+                        permit_available.notify_one();
                     });
                 }
             });

@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build the `oracles` binary
 # ---------------------------------------------------------------------------
-ARG RUST_VERSION=1.96
+ARG RUST_VERSION=1.97
 FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 
 WORKDIR /app

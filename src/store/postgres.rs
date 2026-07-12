@@ -7,6 +7,7 @@ use crate::domain::{
     RateAmount, RateRecord,
 };
 use crate::error::{Error, Result};
+use crate::sql::is_reserved_word;
 use crate::store::{EventRowId, OutboxDelivery, OutboxStore, RateStore};
 #[cfg(feature = "postgres-tls")]
 use postgres::Client;
@@ -25,8 +26,6 @@ pub struct PostgresRateStore {
     outbox_table: String,
     in_tx: bool,
     write_mode: WriteMode,
-    #[allow(dead_code)]
-    stale_after_secs: u64,
     /// Configured column names for the rates table.
     rate_columns: ResolvedRateColumns,
     /// Configured column names for the events table.
@@ -62,7 +61,6 @@ impl PostgresRateStore {
         }
 
         let write_mode = config.oracles.table.write_mode.clone();
-        let stale_after_secs = config.oracles.stale_after_secs;
 
         let rates_table = validate_identifier(&config.oracles.table.name, "oracles.table.name")?;
         let events_table = validate_identifier(&config.events.table, "events.table")?;
@@ -112,7 +110,6 @@ impl PostgresRateStore {
             outbox_table,
             in_tx: false,
             write_mode,
-            stale_after_secs,
             rate_columns,
             event_columns,
             outbox_columns,
@@ -868,69 +865,6 @@ impl OutboxStore for PostgresRateStore {
 // Identifier validation
 // ---------------------------------------------------------------------------
 
-/// SQL reserved words that should be rejected as identifiers.
-const SQL_RESERVED_WORDS: &[&str] = &[
-    "select",
-    "insert",
-    "update",
-    "delete",
-    "create",
-    "drop",
-    "alter",
-    "table",
-    "index",
-    "view",
-    "trigger",
-    "where",
-    "from",
-    "join",
-    "on",
-    "and",
-    "or",
-    "not",
-    "null",
-    "is",
-    "in",
-    "like",
-    "between",
-    "as",
-    "order",
-    "group",
-    "having",
-    "limit",
-    "offset",
-    "union",
-    "except",
-    "intersect",
-    "into",
-    "values",
-    "set",
-    "primary",
-    "key",
-    "foreign",
-    "references",
-    "check",
-    "default",
-    "constraint",
-    "unique",
-    "cascade",
-    "restrict",
-    "if",
-    "exists",
-    "case",
-    "when",
-    "then",
-    "else",
-    "end",
-    "begin",
-    "commit",
-    "rollback",
-    "transaction",
-    "true",
-    "false",
-    "unknown",
-];
-
 fn validate_identifier(value: &str, field: &str) -> Result<String> {
     if value.is_empty() {
         return Err(Error::Store(format!("{field} must not be empty")));
@@ -949,7 +883,7 @@ fn validate_identifier(value: &str, field: &str) -> Result<String> {
             "{field} contains invalid characters, only [A-Za-z0-9_] allowed: {value}"
         )));
     }
-    if SQL_RESERVED_WORDS.contains(&value.to_ascii_lowercase().as_str()) {
+    if is_reserved_word(value) {
         return Err(Error::Store(format!(
             "{field} is a SQL reserved word and cannot be used as an identifier: {value}"
         )));

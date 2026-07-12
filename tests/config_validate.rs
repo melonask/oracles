@@ -84,7 +84,6 @@ fn missing_chain_reference_fails_validation() {
             providers,
             asset_ids: None,
             assets: None,
-            enabled: None,
         },
     };
 

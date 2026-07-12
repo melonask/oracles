@@ -120,7 +120,6 @@ fn base_raw_config() -> RawConfig {
             },
             asset_ids: None,
             assets: None,
-            enabled: None,
         },
     }
 }

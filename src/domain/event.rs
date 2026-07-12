@@ -88,6 +88,15 @@ impl EventAction {
             Self::DisableAsset => "disable_asset",
         }
     }
+
+    /// Return the event type emitted when this action is selected.
+    pub fn event_type(&self) -> EventType {
+        match self {
+            Self::Alert => EventType::RateAnomaly,
+            Self::Quarantine => EventType::RateQuarantined,
+            Self::Reject | Self::DisableAsset => EventType::RateRejected,
+        }
+    }
 }
 
 /// The reason an oracle event was triggered.

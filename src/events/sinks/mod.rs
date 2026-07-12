@@ -36,38 +36,32 @@ impl EventSink for TableSink {
 ///
 /// Returns a boxed trait object for the appropriate sink kind. Fails if a
 /// required feature (`webhook` or `telegram`) is not enabled.
-#[allow(unused_variables)]
 pub fn build_sink(config: &ResolvedEventSink) -> Result<Box<dyn EventSink>> {
     match config {
         ResolvedEventSink::Log { level } => Ok(Box::new(log::LogSink::new(level.clone()))),
 
         ResolvedEventSink::Table => Ok(Box::new(TableSink)),
 
+        #[cfg(feature = "webhook")]
         ResolvedEventSink::Webhook {
             url_env,
             method,
             headers,
             timeout_secs,
             ..
-        } => {
-            #[cfg(feature = "webhook")]
-            {
-                Ok(Box::new(webhook::WebhookSink::new(
-                    url_env.clone(),
-                    method.clone(),
-                    headers.clone(),
-                    *timeout_secs,
-                )?))
-            }
+        } => Ok(Box::new(webhook::WebhookSink::new(
+            url_env.clone(),
+            method.clone(),
+            headers.clone(),
+            *timeout_secs,
+        )?)),
 
-            #[cfg(not(feature = "webhook"))]
-            {
-                Err(crate::error::Error::Config(
-                    "webhook sink requires the `webhook` feature".to_owned(),
-                ))
-            }
-        }
+        #[cfg(not(feature = "webhook"))]
+        ResolvedEventSink::Webhook { .. } => Err(crate::error::Error::Config(
+            "webhook sink requires the `webhook` feature".to_owned(),
+        )),
 
+        #[cfg(feature = "telegram")]
         ResolvedEventSink::Telegram {
             bot_token_env,
             chat_id_env,
@@ -76,25 +70,18 @@ pub fn build_sink(config: &ResolvedEventSink) -> Result<Box<dyn EventSink>> {
             disable_web_page_preview,
             timeout_secs,
             ..
-        } => {
-            #[cfg(feature = "telegram")]
-            {
-                Ok(Box::new(telegram::TelegramSink::new(
-                    bot_token_env.clone(),
-                    chat_id_env.clone(),
-                    method.clone(),
-                    parse_mode.clone(),
-                    *disable_web_page_preview,
-                    *timeout_secs,
-                )))
-            }
+        } => Ok(Box::new(telegram::TelegramSink::new(
+            bot_token_env.clone(),
+            chat_id_env.clone(),
+            method.clone(),
+            parse_mode.clone(),
+            *disable_web_page_preview,
+            *timeout_secs,
+        ))),
 
-            #[cfg(not(feature = "telegram"))]
-            {
-                Err(crate::error::Error::Config(
-                    "telegram sink requires the `telegram` feature".to_owned(),
-                ))
-            }
-        }
+        #[cfg(not(feature = "telegram"))]
+        ResolvedEventSink::Telegram { .. } => Err(crate::error::Error::Config(
+            "telegram sink requires the `telegram` feature".to_owned(),
+        )),
     }
 }

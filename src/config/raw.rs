@@ -205,16 +205,12 @@ pub struct RawOraclesConfig {
     pub outbox: Option<RawOutboxConfig>,
     /// Provider definitions.
     pub providers: BTreeMap<String, RawProviderConfig>,
-    /// Asset ids to price (selects from shared [assets]).
+    /// Asset ids to price (selects from the shared `assets` table).
     /// When set, only these shared assets are resolved.
     pub asset_ids: Option<Vec<String>>,
     /// Oracle-specific asset feed definitions (keyed by asset id).
-    /// Feeds here are combined with identity from shared [assets.<id>].
+    /// Feeds here are combined with identity from the shared `assets.<id>` table.
     pub assets: Option<BTreeMap<String, RawOracleAssetConfig>>,
-    /// Deployment toggle (ignored by oracles, used by deployment tooling).
-    /// This field is silently accepted for universal config compatibility.
-    #[cfg_attr(feature = "config-toml", serde(default))]
-    pub enabled: Option<bool>,
 }
 
 /// Raw rate table configuration.
@@ -276,7 +272,6 @@ pub struct RawConsensusSafetyConfig {
     /// Minimum number of successful feeds.
     pub min_successful_feeds: Option<usize>,
     /// Maximum provider spread as a percentage.
-    #[cfg_attr(feature = "config-toml", serde(alias = "max_deviation_pct"))]
     pub max_provider_spread_pct: Option<String>,
     /// Action when consensus fails.
     pub action: Option<String>,
@@ -294,7 +289,6 @@ pub struct RawEventsConfig {
     /// Store backend for events.
     pub store: Option<String>,
     /// Whether to persist events.
-    #[cfg_attr(feature = "config-toml", serde(alias = "store_events"))]
     pub record: Option<bool>,
     /// Events table name.
     pub table: Option<String>,
@@ -321,9 +315,7 @@ pub struct RawEventRouteConfig {
 
 /// Raw event sink configuration.
 ///
-/// Supports both the map-key format `[oracles.events.sinks.<name>]` and
-/// fields from the array format `[[oracles.events.sinks]]` (via the loader
-/// conversion).
+/// Canonical event sink fields after loading `[[oracles.events.sinks]]`.
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
@@ -389,16 +381,10 @@ pub struct RawOutboxConfig {
     /// Outbox table name.
     pub table: Option<String>,
     /// Dispatch interval in seconds.
-    #[cfg_attr(feature = "config-toml", serde(alias = "poll_interval_secs"))]
     pub dispatch_interval_secs: Option<u64>,
     /// Maximum delivery retries.
-    #[cfg_attr(feature = "config-toml", serde(alias = "max_attempts"))]
     pub max_retries: Option<u32>,
     /// Retry backoff in seconds.
-    #[cfg_attr(
-        feature = "config-toml",
-        serde(alias = "retry_backoff_secs", alias = "retry_base_ms")
-    )]
     pub retry_backoff_secs: Option<u64>,
     /// Request timeout in seconds.
     pub request_timeout_secs: Option<u64>,
@@ -459,10 +445,10 @@ pub struct RawProviderFormatsConfig {
     pub source_updated_at: Option<String>,
 }
 
-/// Raw oracle-specific asset configuration (under [oracles.assets.<id>]).
+/// Raw oracle-specific asset configuration (under `oracles.assets.<id>`).
 ///
 /// Provides feed definitions that are combined with shared asset identity
-/// from [assets.<id>].
+/// from `assets.<id>`.
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
@@ -473,14 +459,14 @@ pub struct RawOracleAssetConfig {
     pub feeds: Option<Vec<RawOracleFeedConfig>>,
 }
 
-/// Raw feed configuration for an oracle asset (under [[oracles.assets.<id>.feeds]]).
+/// Raw feed configuration for an oracle asset (under `[[oracles.assets.<id>.feeds]]`).
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
 pub struct RawOracleFeedConfig {
     /// Whether this feed is enabled.
     pub enabled: Option<bool>,
-    /// Provider name from [oracles.providers].
+    /// Provider name from the `oracles.providers` table.
     pub provider: String,
     /// Feed priority (higher = tried first).
     pub priority: i32,
@@ -489,8 +475,8 @@ pub struct RawOracleFeedConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Universal transport profile types (for [transports.http.<id>] and
-// [transports.webhook.<id>]).
+// Universal transport profile types (for `transports.http.<id>` and
+// `transports.webhook.<id>`).
 // ---------------------------------------------------------------------------
 
 /// Container for universal transport profile sections.
@@ -499,13 +485,13 @@ pub struct RawOracleFeedConfig {
 /// validator for transport reference resolution.
 #[derive(Clone, Debug, Default)]
 pub struct RawTransportsConfig {
-    /// Named HTTP transport profiles from [transports.http.<id>].
+    /// Named HTTP transport profiles from `transports.http.<id>`.
     pub http: BTreeMap<String, RawTransportHttpProfile>,
-    /// Named webhook transport profiles from [transports.webhook.<id>].
+    /// Named webhook transport profiles from `transports.webhook.<id>`.
     pub webhook: BTreeMap<String, RawTransportWebhookProfile>,
 }
 
-/// An HTTP transport profile (from [transports.http.<id>]).
+/// An HTTP transport profile (from `transports.http.<id>`).
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
@@ -514,15 +500,15 @@ pub struct RawTransportHttpProfile {
     pub base_url: Option<String>,
     /// User-Agent override for this profile.
     pub user_agent: Option<String>,
-    /// Request timeout in seconds. 0 means use [http].request_timeout_secs.
+    /// Request timeout in seconds. 0 means use `http.request_timeout_secs`.
     pub timeout_secs: Option<u64>,
-    /// Maximum retries. 0 means use [http].max_retries.
+    /// Maximum retries. 0 means use `http.max_retries`.
     pub max_retries: Option<u32>,
-    /// Initial retry backoff in milliseconds. 0 means use [http].retry_backoff_ms.
+    /// Initial retry backoff in milliseconds. 0 means use `http.retry_backoff_ms`.
     pub retry_base_ms: Option<u64>,
 }
 
-/// A webhook transport profile (from [transports.webhook.<id>]).
+/// A webhook transport profile (from `transports.webhook.<id>`).
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
@@ -549,8 +535,8 @@ pub struct RawTransportWebhookProfile {
 
 /// Array-format event sink (from [[oracles.events.sinks]]).
 ///
-/// This is the universal-config array-of-tables format that uses `id` and
-/// `type` instead of the map-key format.
+/// This is the canonical universal-config array-of-tables format using `id`
+/// and `kind`.
 #[cfg_attr(feature = "config-toml", derive(Deserialize))]
 #[cfg_attr(feature = "config-toml", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
@@ -558,7 +544,6 @@ pub struct RawEventSinkArrayEntry {
     /// Sink identifier.
     pub id: String,
     /// Sink kind: "log", "telegram", "webhook", or "table".
-    #[cfg_attr(feature = "config-toml", serde(alias = "type"))]
     pub kind: String,
     /// Whether this sink is enabled.
     pub enabled: Option<bool>,

@@ -1,8 +1,8 @@
 [package]
 name = "oracles"
-version = "0.1.2"
+version = "0.3.0"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.97"
 license = "MIT"
 description = "Stateless cryptocurrency rate oracle service/library"
 repository = "https://github.com/melonask/oracles"
@@ -16,28 +16,26 @@ config-toml = ["dep:serde", "dep:toml"]
 http-json = ["dep:serde_json", "dep:ureq"]
 sqlite = ["dep:rusqlite"]
 postgres = ["dep:postgres"]
-pg = ["postgres"]
 postgres-tls = ["postgres", "dep:postgres-native-tls", "dep:native-tls"]
 telegram = ["http-json"]
 webhook = ["http-json"]
-outbox = [] # Compatibility no-op: outbox delivery is always available.
 
-full = ["cli", "config-toml", "http-json", "sqlite", "postgres", "postgres-tls", "telegram", "webhook", "outbox"]
+full = ["cli", "config-toml", "http-json", "sqlite", "postgres", "postgres-tls", "telegram", "webhook"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"], optional = true }
-toml = { version = "1", optional = true }
-serde_json = { version = "1", optional = true }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+toml = { version = "1.1.2", optional = true }
+serde_json = { version = "1.0.150", optional = true }
 
-rust_decimal = { version = "1", default-features = false }
-time = { version = "0.3", features = ["formatting", "parsing"] }
+rust_decimal = { version = "1.42.1", default-features = false }
+time = { version = "0.3.53", features = ["formatting", "parsing"] }
 
-ureq = { version = "3", optional = true }
+ureq = { version = "3.3.0", optional = true }
 
-rusqlite = { version = "0.40", optional = true }
-postgres = { version = "0.19", optional = true, features = ["with-time-0_3"] }
-postgres-native-tls = { version = "0.5", optional = true }
-native-tls = { version = "0.2", optional = true }
+rusqlite = { version = "0.40.1", optional = true }
+postgres = { version = "0.19.14", optional = true, features = ["with-time-0_3"] }
+postgres-native-tls = { version = "0.5.3", optional = true }
+native-tls = { version = "0.2.18", optional = true }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -54,4 +52,4 @@ manual_ok_or = "warn"
 large_enum_variant = "warn"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27.0"

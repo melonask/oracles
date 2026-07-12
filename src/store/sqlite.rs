@@ -7,6 +7,7 @@ use crate::domain::{
     RateAmount, RateRecord,
 };
 use crate::error::{Error, Result};
+use crate::sql::is_reserved_word;
 use crate::store::{EventRowId, OutboxDelivery, OutboxStore, RateStore};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
@@ -25,8 +26,6 @@ pub struct SqliteRateStore {
     outbox_table: String,
     in_tx: bool,
     write_mode: WriteMode,
-    #[allow(dead_code)]
-    stale_after_secs: u64,
     /// Configured column names for the rates table.
     rate_columns: ResolvedRateColumns,
     /// Configured column names for the events table.
@@ -60,7 +59,6 @@ impl SqliteRateStore {
         }
 
         let write_mode = config.oracles.table.write_mode.clone();
-        let stale_after_secs = config.oracles.stale_after_secs;
 
         let path = sqlite_path_from_url(&store_config.url)?;
 
@@ -99,7 +97,6 @@ impl SqliteRateStore {
             outbox_table,
             in_tx: false,
             write_mode,
-            stale_after_secs,
             rate_columns,
             event_columns,
             outbox_columns,
@@ -171,6 +168,19 @@ impl SqliteRateStore {
         self.conn
             .execute(&rates_expires_idx, [])
             .map_err(|e| Error::Store(format!("failed to create rates expires_at index: {e}")))?;
+
+        if self.write_mode == WriteMode::Upsert {
+            let rates_unique_idx = format!(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {t}_asset_quote_provider_uniq ON {t} ({asset_id}, {quote}, {provider})",
+                t = self.rates_table,
+                asset_id = rc.asset_id,
+                quote = rc.quote,
+                provider = rc.provider,
+            );
+            self.conn
+                .execute(&rates_unique_idx, [])
+                .map_err(|e| Error::Store(format!("failed to create rates unique index: {e}")))?;
+        }
 
         // -- events table --
         let create_events = format!(
@@ -421,28 +431,14 @@ impl RateStore for SqliteRateStore {
 
         match self.write_mode {
             WriteMode::Upsert => {
-                // DELETE + INSERT within a transaction is atomic for SQLite
-                // in WAL mode. The outer BEGIN IMMEDIATE locks the database
-                // so no concurrent writer can see the transient missing row.
-                let delete_sql = format!(
-                    "DELETE FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
-                    self.rates_table, c.asset_id, c.quote, c.provider,
-                );
-                self.conn
-                    .execute(
-                        &delete_sql,
-                        params![
-                            record.asset_id.as_str(),
-                            record.quote.as_str(),
-                            record.provider.as_str(),
-                        ],
-                    )
-                    .map_err(|e| Error::Store(format!("failed to delete for upsert: {e}")))?;
-
                 let insert_sql = format!(
                     "INSERT INTO {} \
                      ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+                     ON CONFLICT ({}, {}, {}) DO UPDATE SET \
+                     {} = excluded.{}, {} = excluded.{}, {} = excluded.{}, \
+                     {} = excluded.{}, {} = excluded.{}, {} = excluded.{}, \
+                     {} = excluded.{}",
                     self.rates_table,
                     c.asset_id,
                     c.chain_id,
@@ -453,6 +449,23 @@ impl RateStore for SqliteRateStore {
                     c.rate,
                     c.source_updated_at,
                     c.observed_at,
+                    c.expires_at,
+                    c.asset_id,
+                    c.quote,
+                    c.provider,
+                    c.chain_id,
+                    c.chain_id,
+                    c.caip2,
+                    c.caip2,
+                    c.symbol,
+                    c.symbol,
+                    c.rate,
+                    c.rate,
+                    c.source_updated_at,
+                    c.source_updated_at,
+                    c.observed_at,
+                    c.observed_at,
+                    c.expires_at,
                     c.expires_at,
                 );
                 self.conn
@@ -882,69 +895,6 @@ fn sqlite_path_from_url(url: &str) -> Result<String> {
     Ok(path.to_owned())
 }
 
-/// SQL reserved words that should be rejected as identifiers.
-const SQL_RESERVED_WORDS: &[&str] = &[
-    "select",
-    "insert",
-    "update",
-    "delete",
-    "create",
-    "drop",
-    "alter",
-    "table",
-    "index",
-    "view",
-    "trigger",
-    "where",
-    "from",
-    "join",
-    "on",
-    "and",
-    "or",
-    "not",
-    "null",
-    "is",
-    "in",
-    "like",
-    "between",
-    "as",
-    "order",
-    "group",
-    "having",
-    "limit",
-    "offset",
-    "union",
-    "except",
-    "intersect",
-    "into",
-    "values",
-    "set",
-    "primary",
-    "key",
-    "foreign",
-    "references",
-    "check",
-    "default",
-    "constraint",
-    "unique",
-    "cascade",
-    "restrict",
-    "if",
-    "exists",
-    "case",
-    "when",
-    "then",
-    "else",
-    "end",
-    "begin",
-    "commit",
-    "rollback",
-    "transaction",
-    "true",
-    "false",
-    "unknown",
-];
-
 fn validate_identifier(value: &str, field: &str) -> Result<String> {
     if value.is_empty() {
         return Err(Error::Store(format!("{field} must not be empty")));
@@ -963,7 +913,7 @@ fn validate_identifier(value: &str, field: &str) -> Result<String> {
             "{field} contains invalid characters, only [A-Za-z0-9_] allowed: {value}"
         )));
     }
-    if SQL_RESERVED_WORDS.contains(&value.to_ascii_lowercase().as_str()) {
+    if is_reserved_word(value) {
         return Err(Error::Store(format!(
             "{field} is a SQL reserved word and cannot be used as an identifier: {value}"
         )));

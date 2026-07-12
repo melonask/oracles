@@ -23,22 +23,24 @@ fn print_help() {
 oracles — multi-source oracle rate fetcher
 
 Usage:
-  oracles [OPTIONS]
+  oracles [OPTIONS] [COMMAND]
   oracles ping
 
 Options:
-  --ping               Print 'pong' and exit
-  --config <path>      Path to config file (default: Config.toml)
-  --check              Validate config and exit
+  --config <path>      Path to config file (default: $ORACLES_CONFIG, then Config.toml)
   --once               Fetch rates once and exit
   --log-level <level>  Override log level (error, warn, info, debug)
   -h, --help           Show help
+
+Commands:
+  check                Validate config and exit
+  ping                 Print 'pong' and exit
 
 Examples:
   oracles
   oracles ping
   oracles --config myconfig.toml
-  oracles --config myconfig.toml --check
+  oracles --config myconfig.toml check
   oracles --config myconfig.toml --once
   oracles --config myconfig.toml --log-level debug
 "

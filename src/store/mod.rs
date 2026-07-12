@@ -153,6 +153,3 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 /// PostgreSQL-backed rate and event store.
 pub mod postgres;
-
-/// Database schema migration support.
-pub mod migration;

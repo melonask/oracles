@@ -1,8 +1,15 @@
-use crate::config::raw::{RawConfig, RawEventSinkArrayEntry, RawTransportsConfig};
 use crate::config::resolved::ResolvedConfig;
-use crate::config::validate::resolve_config;
 use crate::error::{Error, Result};
+
+#[cfg(feature = "config-toml")]
+use crate::config::env::expand_env;
+#[cfg(feature = "config-toml")]
+use crate::config::raw::{RawConfig, RawEventSinkArrayEntry, RawTransportsConfig};
+#[cfg(feature = "config-toml")]
+use crate::config::validate::resolve_config;
+#[cfg(feature = "config-toml")]
 use std::collections::BTreeMap;
+#[cfg(feature = "config-toml")]
 use toml::Value;
 
 #[cfg(feature = "config-toml")]
@@ -11,9 +18,9 @@ use toml::Value;
 /// Uses a two-stage parsing approach for universal config compatibility:
 /// 1. Parse the whole TOML into a [`toml::Value`] table.
 /// 2. Extract only known root sections (version, log, stores, http, chains,
-///    assets, transports, oracles). Ignore unrelated namespaces (ladon, pano,
-///    bria, meta, runtime, paths, objects, transports.amqp).
-/// 3. Validate that [oracles] contains no unknown fields.
+///    assets, transports, oracles). Ignore unrelated namespaces (artur, bria,
+///    ladon, pano, meta, runtime, paths, objects, transports.amqp).
+/// 3. Validate that the `oracles` table contains no unknown fields.
 /// 4. Convert array-format `[[oracles.events.sinks]]` to the map format.
 /// 5. Deserialize the filtered content into [`RawConfig`].
 /// 6. Run the full validation pipeline via [`resolve_config`].
@@ -47,7 +54,7 @@ fn parse_universal_config(text: &str) -> Result<(RawConfig, RawTransportsConfig)
     ];
 
     // Extract transports before filtering.
-    let transports = extract_transports(&root_table);
+    let transports = extract_transports(&root_table)?;
 
     // Extract the oracles table for unknown-field validation.
     let oracles_val = root_table.get("oracles").cloned();
@@ -60,13 +67,23 @@ fn parse_universal_config(text: &str) -> Result<(RawConfig, RawTransportsConfig)
         }
     }
 
-    // Validate unknown fields inside [oracles].
+    // Expand every string in the shared and Oracles-owned sections before
+    // deserialization and validation. Unrelated package namespaces remain
+    // untouched, so their required environment variables are not imposed on
+    // the standalone Oracles worker.
+    let mut filtered_value = Value::Table(filtered);
+    expand_env_values(&mut filtered_value)?;
+    let Value::Table(filtered) = filtered_value else {
+        return Err(Error::Config("config root must be a TOML table".to_owned()));
+    };
+
+    // Validate unknown fields inside the `oracles` table.
     if let Some(ref ov) = oracles_val {
         validate_oracles_unknown_fields(ov)?;
     }
 
     // Convert array-format event sinks if present.
-    let filtered = convert_array_sinks(filtered);
+    let filtered = convert_array_sinks(filtered)?;
 
     let raw: RawConfig = toml::Value::Table(filtered)
         .try_into()
@@ -77,9 +94,9 @@ fn parse_universal_config(text: &str) -> Result<(RawConfig, RawTransportsConfig)
 
 #[cfg(feature = "config-toml")]
 /// Extract universal transport profiles from the root table.
-fn extract_transports(root: &toml::map::Map<String, Value>) -> RawTransportsConfig {
+fn extract_transports(root: &toml::map::Map<String, Value>) -> Result<RawTransportsConfig> {
     let Some(Value::Table(transports)) = root.get("transports") else {
-        return RawTransportsConfig::default();
+        return Ok(RawTransportsConfig::default());
     };
 
     let mut http_profiles = BTreeMap::new();
@@ -87,28 +104,55 @@ fn extract_transports(root: &toml::map::Map<String, Value>) -> RawTransportsConf
 
     if let Some(Value::Table(http_tbl)) = transports.get("http") {
         for (id, val) in http_tbl {
-            if let Ok(profile) = val.clone().try_into() {
-                http_profiles.insert(id.clone(), profile);
-            }
+            let mut value = val.clone();
+            expand_env_values(&mut value)?;
+            let profile = value.try_into().map_err(|err| {
+                Error::Config(format!("invalid [transports.http.{id}] profile: {err}"))
+            })?;
+            http_profiles.insert(id.clone(), profile);
         }
     }
 
     if let Some(Value::Table(wh_tbl)) = transports.get("webhook") {
         for (id, val) in wh_tbl {
-            if let Ok(profile) = val.clone().try_into() {
-                webhook_profiles.insert(id.clone(), profile);
-            }
+            let mut value = val.clone();
+            expand_env_values(&mut value)?;
+            let profile = value.try_into().map_err(|err| {
+                Error::Config(format!("invalid [transports.webhook.{id}] profile: {err}"))
+            })?;
+            webhook_profiles.insert(id.clone(), profile);
         }
     }
 
-    RawTransportsConfig {
+    Ok(RawTransportsConfig {
         http: http_profiles,
         webhook: webhook_profiles,
-    }
+    })
 }
 
 #[cfg(feature = "config-toml")]
-/// Validate that the [oracles] table contains no unknown fields.
+/// Expand environment placeholders in every string nested under a supported
+/// universal-config section.
+fn expand_env_values(value: &mut Value) -> Result<()> {
+    match value {
+        Value::String(string) => *string = expand_env(string)?,
+        Value::Array(values) => {
+            for value in values {
+                expand_env_values(value)?;
+            }
+        }
+        Value::Table(values) => {
+            for (_, value) in values {
+                expand_env_values(value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[cfg(feature = "config-toml")]
+/// Validate that the `oracles` table contains no unknown fields.
 ///
 /// Walks all keys in the oracles table and checks them against the known
 /// set of fields for [`RawOraclesConfig`].
@@ -117,7 +161,7 @@ fn validate_oracles_unknown_fields(oracles: &Value) -> Result<()> {
         return Ok(());
     };
 
-    // Known keys for RawOraclesConfig (plus enabled which is silently accepted).
+    // Known keys for RawOraclesConfig.
     const KNOWN_ORACLES_KEYS: &[&str] = &[
         "store",
         "quote",
@@ -134,7 +178,6 @@ fn validate_oracles_unknown_fields(oracles: &Value) -> Result<()> {
         "providers",
         "asset_ids",
         "assets",
-        "enabled",
     ];
 
     for key in table.keys() {
@@ -149,28 +192,30 @@ fn validate_oracles_unknown_fields(oracles: &Value) -> Result<()> {
 }
 
 #[cfg(feature = "config-toml")]
-/// Convert array-format event sinks `[[oracles.events.sinks]]` to map format.
-///
-/// The universal config uses `[[oracles.events.sinks]]` (array of tables)
-/// while the internal model expects `[oracles.events.sinks.<id>]` (map).
-/// This function detects the array format and converts each entry into the
-/// map format, using the `id` field as the map key.
-///
-/// Each array entry is converted to a TOML table with `kind` (renamed from
-/// `type`) and all other fields preserved.
-fn convert_array_sinks(mut root: toml::map::Map<String, Value>) -> toml::map::Map<String, Value> {
+/// Convert canonical array-format event sinks `[[oracles.events.sinks]]` to
+/// the internal map format.
+fn convert_array_sinks(
+    mut root: toml::map::Map<String, Value>,
+) -> Result<toml::map::Map<String, Value>> {
     // Navigate to oracles.events.sinks
     let Some(Value::Table(oracles)) = root.get_mut("oracles") else {
-        return root;
+        return Ok(root);
     };
     let Some(Value::Table(events)) = oracles.get_mut("events") else {
-        return root;
+        return Ok(root);
     };
     let Some(sinks_val) = events.get("sinks") else {
-        return root;
+        return Ok(root);
     };
 
-    // If sinks is an array, convert to map.
+    if let Value::Table(_) = sinks_val {
+        return Err(Error::Config(
+            "[oracles.events.sinks] must use [[oracles.events.sinks]] entries with id and kind"
+                .to_owned(),
+        ));
+    }
+
+    // Convert canonical array entries to the internal map.
     if let Value::Array(arr) = sinks_val {
         let mut entries: Vec<RawEventSinkArrayEntry> = Vec::new();
 
@@ -180,7 +225,7 @@ fn convert_array_sinks(mut root: toml::map::Map<String, Value>) -> toml::map::Ma
                 Err(_e) => {
                     // If conversion fails, leave sinks as-is; the normal
                     // deserializer will produce a clear error.
-                    return root;
+                    return Ok(root);
                 }
             }
         }
@@ -264,13 +309,17 @@ fn convert_array_sinks(mut root: toml::map::Map<String, Value>) -> toml::map::Ma
                 );
             }
 
-            sinks_map.insert(id, Value::Table(table));
+            if sinks_map.insert(id.clone(), Value::Table(table)).is_some() {
+                return Err(Error::Config(format!(
+                    "duplicate sink id `{id}` in [[oracles.events.sinks]]"
+                )));
+            }
         }
 
         events.insert("sinks".to_owned(), Value::Table(sinks_map));
     }
 
-    root
+    Ok(root)
 }
 
 #[cfg(all(feature = "config-toml", test))]
@@ -387,6 +436,40 @@ kind = "static"
     }
 
     #[test]
+    fn expands_oracles_quote_before_validation() {
+        let toml = r#"
+version = 1
+
+[stores.oracles]
+driver = "sqlite"
+url = "sqlite://test.db"
+
+[chains.eth]
+family = "evm"
+caip2 = "eip155:1"
+
+[assets.eth]
+enabled = false
+chain = "eth"
+symbol = "ETH"
+kind = "native"
+decimals = 18
+
+[oracles]
+store = "oracles"
+quote = "${ORACLES_TEST_UNSET_QUOTE_9BF4D6:-USD}"
+refresh_secs = 60
+stale_after_secs = 120
+
+[oracles.providers.static]
+kind = "static"
+"#;
+        let (raw, transports) = parse_universal_config(toml).expect("valid universal config");
+        let resolved = resolve_config(raw, transports).expect("expanded quote must validate");
+        assert_eq!(resolved.oracles.quote.as_str(), "USD");
+    }
+
+    #[test]
     fn parse_universal_with_transports() {
         let toml = r#"
 version = 1
@@ -432,6 +515,23 @@ timeout_secs = 10
     }
 
     #[test]
+    fn rejects_invalid_oracles_transport_profile()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let toml = r#"
+[transports.http.default]
+timeout_secs = 30
+unknown_field = true
+"#;
+        let err = parse_universal_config(toml)
+            .err()
+            .ok_or("unknown fields in an Oracles HTTP transport must fail")?
+            .to_string();
+        assert!(err.contains("transports.http.default"));
+        assert!(err.contains("unknown_field"));
+        Ok(())
+    }
+
+    #[test]
     fn parse_universal_with_array_event_sinks() {
         let toml = r#"
 version = 1
@@ -465,7 +565,7 @@ enabled = false
 
 [[oracles.events.sinks]]
 id = "ops-log"
-type = "log"
+kind = "log"
 level = "warn"
 enabled = true
 "#;
@@ -478,6 +578,57 @@ enabled = true
         let sink = &sinks["ops-log"];
         assert_eq!(sink.kind, "log");
         assert_eq!(sink.level.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn rejects_duplicate_array_event_sink_ids()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let root: Value = toml::from_str(
+            r#"
+[oracles.events]
+
+[[oracles.events.sinks]]
+id = "ops-log"
+kind = "log"
+
+[[oracles.events.sinks]]
+id = "ops-log"
+kind = "log"
+"#,
+        )?;
+        let root = root
+            .as_table()
+            .cloned()
+            .ok_or("TOML root must be a table")?;
+
+        let err = convert_array_sinks(root)
+            .err()
+            .ok_or("duplicate sink IDs must fail")?
+            .to_string();
+        assert!(err.contains("duplicate sink id `ops-log`"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_legacy_map_event_sink_shape() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        let root: Value = toml::from_str(
+            r#"
+[oracles.events.sinks.ops_log]
+kind = "log"
+"#,
+        )?;
+        let root = root
+            .as_table()
+            .cloned()
+            .ok_or("TOML root must be a table")?;
+
+        let err = convert_array_sinks(root)
+            .err()
+            .ok_or("legacy map event sink shape must fail")?
+            .to_string();
+        assert!(err.contains("must use [[oracles.events.sinks]]"));
+        Ok(())
     }
 
     #[test]

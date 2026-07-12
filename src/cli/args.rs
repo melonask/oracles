@@ -1,8 +1,14 @@
 use crate::error::{Error, Result};
 
+/// Primary environment variable for the Oracles config path.
+pub const ORACLES_CONFIG_ENV: &str = "ORACLES_CONFIG";
+
+const DEFAULT_CONFIG_PATH: &str = "Config.toml";
+
 /// Parsed command-line arguments.
 pub struct Args {
-    /// Path to the TOML configuration file.
+    /// Path to the TOML configuration file, resolved from `--config`, then
+    /// [`ORACLES_CONFIG_ENV`], then `Config.toml`.
     pub config_path: String,
     /// If true, fetch rates once and exit.
     pub once: bool,
@@ -16,7 +22,7 @@ pub struct Args {
 
 /// Parse command-line arguments from `std::env::args()`.
 ///
-/// Supports `--config <path>`, `--once`, `--check`, `--log-level <level>`,
+/// Supports `--config <path>`, `check`, `ping`, `--once`, `--log-level <level>`,
 /// and `--help`/`-h`.
 /// Returns [`Error::HelpRequested`] for help flags, which the caller
 /// should handle by printing usage and exiting.
@@ -43,8 +49,8 @@ pub fn parse_args() -> Result<Args> {
                 config_path = Some(value);
             }
             "--once" => once = true,
-            "--check" => check = true,
-            "ping" | "--ping" => ping = true,
+            "check" => check = true,
+            "ping" => ping = true,
             "--log-level" => {
                 let value = args
                     .next()
@@ -62,10 +68,44 @@ pub fn parse_args() -> Result<Args> {
     }
 
     Ok(Args {
-        config_path: config_path.unwrap_or_else(|| "Config.toml".to_owned()),
+        config_path: select_config_path(config_path, std::env::var(ORACLES_CONFIG_ENV).ok()),
         once,
         check,
         ping,
         log_level,
     })
+}
+
+fn select_config_path(cli_path: Option<String>, oracles_config: Option<String>) -> String {
+    cli_path.unwrap_or_else(|| {
+        oracles_config
+            .filter(|path| !path.is_empty())
+            .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_owned())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_path_prefers_cli_over_environment() {
+        assert_eq!(
+            select_config_path(Some("cli.toml".to_owned()), Some("oracles.toml".to_owned()),),
+            "cli.toml"
+        );
+    }
+
+    #[test]
+    fn config_path_uses_oracles_environment_then_default() {
+        assert_eq!(
+            select_config_path(None, Some("oracles.toml".to_owned())),
+            "oracles.toml"
+        );
+        assert_eq!(
+            select_config_path(None, Some(String::new())),
+            DEFAULT_CONFIG_PATH
+        );
+        assert_eq!(select_config_path(None, None), DEFAULT_CONFIG_PATH);
+    }
 }

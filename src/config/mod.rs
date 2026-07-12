@@ -1,8 +1,8 @@
 //! Configuration loading, validation, and resolution.
 //!
-//! The config pipeline reads a TOML file (or programmatic [`RawConfig`]),
+//! The config pipeline reads a TOML file (or programmatic [`crate::config::raw::RawConfig`]),
 //! resolves defaults, validates cross-references, expands environment
-//! variable placeholders, and produces a fully-validated [`ResolvedConfig`].
+//! variable placeholders, and produces a fully-validated [`crate::config::ResolvedConfig`].
 
 /// Environment variable expansion utilities.
 pub mod env;

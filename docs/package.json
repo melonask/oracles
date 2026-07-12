@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "vitepress build"
+  },
+  "devDependencies": {
+    "vitepress": "2.0.0-alpha.18"
+  }
+}

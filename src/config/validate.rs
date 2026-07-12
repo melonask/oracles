@@ -3,6 +3,7 @@ use crate::config::raw::*;
 use crate::config::resolved::*;
 use crate::domain::{AssetId, ChainId, EventAction, ProviderId, Quote, RateAmount};
 use crate::error::{Error, Result};
+use crate::sql::is_reserved_word;
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -321,7 +322,7 @@ fn resolve_http(raw: Option<RawHttpConfig>) -> Result<ResolvedHttpConfig> {
     }
 
     Ok(ResolvedHttpConfig {
-        user_agent: raw.user_agent.unwrap_or_else(|| "oracles/0.1".to_owned()),
+        user_agent: raw.user_agent.unwrap_or_else(|| "oracles/0.3".to_owned()),
         request_timeout_secs,
         max_retries: raw.max_retries.unwrap_or(3),
         retry_backoff_ms: raw.retry_backoff_ms.unwrap_or(500),
@@ -1171,70 +1172,6 @@ fn parse_decimal(input: &str, field: &str) -> Result<Decimal> {
 // Column mapping helpers
 // ---------------------------------------------------------------------------
 
-/// SQL reserved words that should be rejected as identifiers.
-const SQL_RESERVED_WORDS: &[&str] = &[
-    // Common SQL reserved words (SQLite + PostgreSQL intersection)
-    "select",
-    "insert",
-    "update",
-    "delete",
-    "create",
-    "drop",
-    "alter",
-    "table",
-    "index",
-    "view",
-    "trigger",
-    "where",
-    "from",
-    "join",
-    "on",
-    "and",
-    "or",
-    "not",
-    "null",
-    "is",
-    "in",
-    "like",
-    "between",
-    "as",
-    "order",
-    "group",
-    "having",
-    "limit",
-    "offset",
-    "union",
-    "except",
-    "intersect",
-    "into",
-    "values",
-    "set",
-    "primary",
-    "key",
-    "foreign",
-    "references",
-    "check",
-    "default",
-    "constraint",
-    "unique",
-    "cascade",
-    "restrict",
-    "if",
-    "exists",
-    "case",
-    "when",
-    "then",
-    "else",
-    "end",
-    "begin",
-    "commit",
-    "rollback",
-    "transaction",
-    "true",
-    "false",
-    "unknown",
-];
-
 fn validate_identifier_config(value: &str, field: &str) -> Result<()> {
     if value.is_empty() {
         return Err(Error::Config(format!("{field} must not be empty")));
@@ -1253,7 +1190,7 @@ fn validate_identifier_config(value: &str, field: &str) -> Result<()> {
             "{field} contains invalid characters, only [A-Za-z0-9_] allowed: {value}"
         )));
     }
-    if SQL_RESERVED_WORDS.contains(&value.to_ascii_lowercase().as_str()) {
+    if is_reserved_word(value) {
         return Err(Error::Config(format!(
             "{field} is a SQL reserved word and cannot be used as an identifier: {value}"
         )));

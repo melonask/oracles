@@ -8,7 +8,6 @@
 //! cargo run --example minimal
 //! ```
 
-#[allow(unused_imports)]
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

@@ -94,7 +94,6 @@ fn minimal_raw_config() -> RawConfig {
             providers,
             asset_ids: None,
             assets: None,
-            enabled: None,
         },
     }
 }
@@ -115,6 +114,10 @@ format = "json"
 
 [meta]
 name = "test-stack"
+
+[artur]
+enabled = true
+store = "oracles"
 
 [runtime]
 worker_threads = 0
@@ -156,7 +159,7 @@ stale_after_secs = 120
 [oracles.providers.static]
 kind = "static"
 
-# --- Unrelated namespaces (should be silently ignored) ---
+# --- Other package namespaces (should be silently ignored) ---
 
 [ladon]
 enabled = true

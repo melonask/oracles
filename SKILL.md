@@ -5,6 +5,14 @@ description: Oracles is a Rust service and library for fetching cryptocurrency e
 
 `oracles` is a Rust service and library for fetching cryptocurrency exchange rates from configured providers, validating candidate rates, and storing accepted rates in SQLite or PostgreSQL.
 
+## AI operating guide
+
+Use `oracles ping` for liveness only: it does not read configuration or open a store. Use `oracles --config Config.toml check` before any mutation: it parses and validates configuration without fetching providers or opening a store. Use `oracles --config Config.toml --once` for one bounded fetch/decision/persistence pass. Use `oracles --config Config.toml` only for the long-running refresh loop; it repeats at `oracles.refresh_secs` until shutdown.
+
+Do not place credentials in configuration. Use `${NAME}` for required environment variables and `${NAME:-default}` only where a safe default exists. Treat `stale_after_secs`, source age, bounds, change limits, bootstrap behavior, and consensus as safety controls, not delivery preferences. Prefer `quarantine` while investigating unexpected data; `alert` accepts a rate, while `reject` and `disable_asset` do not.
+
+Handle any command error as an incomplete operation. A failed `check` means do not run `once` or `loop`. A one-shot summary with failures means some assets did not refresh; inspect provider/safety events and do not treat absent or expired rates as usable. In outbox mode, events and pending deliveries are durable, but a `dead` delivery requires operator action.
+
 It is designed for payment, balance, billing, x402, and automation systems that need fresh fiat-denominated rates without making the oracle process itself the source of truth.
 
 ## Core ideas
@@ -44,12 +52,10 @@ Default features: `cli`, `config-toml`, `http-json`, `sqlite`.
 | `http-json` | yes | Enables HTTP JSON providers using `ureq` and `serde_json`. |
 | `sqlite` | yes | Enables the SQLite store backend. |
 | `postgres` | no | Enables the PostgreSQL store backend. |
-| `pg` | no | Alias for `postgres`. Enables the PostgreSQL store backend. |
 | `postgres-tls` | no | Enables PostgreSQL TLS support. Implies `postgres`. |
 | `telegram` | no | Enables the Telegram event sink. Implies `http-json` for the shared HTTP client dependency. |
 | `webhook` | no | Enables the webhook event sink. Implies `http-json` for the shared HTTP client dependency. |
-| `outbox` | no | Compatibility no-op. Outbox types are implemented by the store/event system. |
-| `full` | no | Enables all optional features: CLI, TOML config, HTTP JSON, SQLite, PostgreSQL, TLS, Telegram, webhook, and outbox. |
+| `full` | no | Enables all optional features: CLI, TOML config, HTTP JSON, SQLite, PostgreSQL, TLS, Telegram, and webhook. |
 
 ## Installation
 
@@ -85,12 +91,12 @@ Copy the example config:
 cp Config.example.toml Config.toml
 ```
 
-The provided `Config.example.toml` is intentionally verbose and includes Telegram and webhook sinks. To use it unchanged, build/run with `--features full`. With default features, remove or comment out the Telegram/webhook sink definitions and routes before running `--check`.
+The provided `Config.example.toml` is intentionally verbose and includes Telegram and webhook sinks. To use it unchanged, build/run with `--features full`. With default features, remove or comment out the Telegram/webhook sink definitions and routes before running `check`.
 
 Validate config:
 
 ```bash
-oracles --config Config.toml --check
+oracles --config Config.toml check
 ```
 
 Fetch once and exit:
@@ -118,7 +124,6 @@ oracles [OPTIONS]
 
 Options:
   --config <path>      Path to config file (default: Config.toml)
-  --check              Validate config and exit
   --once               Fetch rates once and exit
   --log-level <level>  Override log level: trace, debug, info, warn, error
   -h, --help           Show help
@@ -245,7 +250,7 @@ timeout_secs = 10
 
 [[oracles.events.sinks]]
 id = "ops-webhook"
-type = "webhook"
+kind = "webhook"
 transport = "ops"
 ```
 
@@ -349,7 +354,7 @@ Current limitation: both SQLite and PostgreSQL stores require `max_connections =
 
 ```toml
 [http]
-user_agent = "oracles/0.1"
+user_agent = "oracles/0.3"
 request_timeout_secs = 15
 max_retries = 3
 retry_backoff_ms = 500
@@ -808,7 +813,8 @@ Routes are validated: unknown event names and unknown sink names are rejected.
 ### Log sink
 
 ```toml
-[oracles.events.sinks.ops_log]
+[[oracles.events.sinks]]
+id = "ops_log"
 kind = "log"
 level = "warn"
 ```
@@ -818,7 +824,8 @@ Allowed levels: `trace`, `debug`, `info`, `warn`, `error`.
 ### Table sink
 
 ```toml
-[oracles.events.sinks.audit_table]
+[[oracles.events.sinks]]
+id = "audit_table"
 kind = "table"
 ```
 
@@ -829,7 +836,8 @@ The table sink is a no-op delivery sink because the event is already written to 
 Requires the `telegram` feature.
 
 ```toml
-[oracles.events.sinks.ops_telegram]
+[[oracles.events.sinks]]
+id = "ops_telegram"
 kind = "telegram"
 bot_token_env = "TELEGRAM_BOT_TOKEN"
 chat_id_env = "TELEGRAM_CHAT_ID"
@@ -856,29 +864,13 @@ Only `POST` is supported.
 Requires the `webhook` feature.
 
 ```toml
-[oracles.events.sinks.ops_webhook]
+[[oracles.events.sinks]]
+id = "ops_webhook"
 kind = "webhook"
 url_env = "ORACLES_OPS_WEBHOOK_URL"
 method = "POST"
-
-[oracles.events.sinks.ops_webhook.headers]
-content-type = "application/json"
-authorization = "Bearer ${ORACLES_OPS_WEBHOOK_TOKEN}"
-
-[oracles.events.sinks.ops_webhook.body]
-format = "json"
-template = """
-{
-  "event_type": "{event_type}",
-  "asset_id": "{asset_id}",
-  "quote": "{quote}",
-  "provider": "{provider}",
-  "candidate_rate": "{candidate_rate}",
-  "action": "{action}",
-  "reason": "{reason}",
-  "observed_at": "{observed_at}"
-}
-"""
+headers = { content-type = "application/json", authorization = "Bearer ${ORACLES_OPS_WEBHOOK_TOKEN}" }
+body = { format = "json", template = "{\"event_type\": \"{event_type}\"}" }
 ```
 
 Current runtime support: use `method = "POST"`. The validator may accept other methods in the current code, but the delivered sink implementation returns an error for non-POST methods.

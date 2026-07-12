@@ -16,11 +16,9 @@
 //! - `postgres` — PostgreSQL store backend.
 //! - `telegram` — Telegram event sink.
 //! - `webhook` — Webhook event sink.
-//! - `outbox` — Compatibility feature (no-op). Outbox delivery is always
-//!   available when events are enabled.
 //! - `full` — Meta-feature that enables all optional features
 //!   (`cli`, `config-toml`, `http-json`, `sqlite`, `postgres`, `postgres-tls`,
-//!   `telegram`, `webhook`, `outbox`). The official Docker image is built with
+//!   `telegram`, `webhook`). The official Docker image is built with
 //!   this feature set.
 //!
 //! # Quick start
@@ -62,3 +60,4 @@ pub mod prelude;
 
 pub use crate::engine::Oracle;
 pub use crate::error::{Error, Result};
+mod sql;
