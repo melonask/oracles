@@ -5,252 +5,176 @@ description: Use when operating, configuring, integrating, diagnosing, or modify
 
 # Oracles operating guide
 
-`oracles` fetches configured cryptocurrency/fiat rates, evaluates candidates
-against safety policy, and durably stores accepted rates. It is not a price
-authority: consumers must read a fresh accepted row from its store and treat no
-fresh row as unavailable. Rates are decimal strings; never substitute floating
-point arithmetic.
+## Purpose and non-goals
 
-## Scope and non-goals
+`oracles` fetches configured cryptocurrency/fiat rates, evaluates candidates against safety policy, and durably stores accepted rates, events, and outbox state. The durable store is authoritative; process memory, logs, provider responses, and notifications are not. Rates are decimal strings—never replace them with floating-point arithmetic. Consumers must use only a fresh accepted row and treat no fresh row as unavailable.
 
-Use this skill for the service binary, its TOML configuration, Rust library API,
-SQLite/PostgreSQL stores, providers, safety events, sinks, and outbox.
+Do **not** use this service to recommend trades or prices; perform chain RPC, wallet, transfer, signing, or x402 settlement; or claim that a fetched/notified value is correct. Chain metadata and x402 helpers do not perform those operations. Do not alter production config, safety thresholds, schemas, migrations, providers, or rows without an explicit reviewed request.
 
-Do **not** use it to:
+## Command selection
 
-- recommend assets, prices, trades, or risk limits without an operator's policy;
-- claim a rate is correct merely because it was fetched or notified;
-- perform chain RPC reads, wallet operations, transfers, signing, or x402
-  settlement—chain metadata and x402 helpers do not perform those operations;
-- alter database rows, schemas, migrations, safety thresholds, providers, or
-  production configuration without an explicit, reviewed change request;
-- treat the worker's memory, logs, a notification, or a provider response as
-  the source of truth.
-
-The durable store is authoritative for accepted rates, recorded events, and
-outbox state. The process is intentionally stateless between refreshes.
-
-## Command selection matrix
-
-Use the installed `oracles` binary for operational commands. For a checkout,
-use `cargo run --features <needed features> --` only when deliberately testing
-that checkout; it must be followed by `--` before oracle arguments.
-
-| Intent | Safe command | What it does | Do not infer |
+| Intent | Command | Result | Does not prove |
 |---|---|---|---|
-| Binary liveness only | `oracles ping` | Prints `pong`; reads neither config nor store. | Config, feature, credential, provider, database, or rate health. |
-| Validate a proposed config | `oracles --config /absolute/path check` | Loads, expands environment references, and validates config/features; initializes logging. It does not open a store, migrate, fetch, write, or deliver. | Database connectivity, migrations, provider reachability, or sink credentials that are resolved only at delivery. |
-| One bounded production-like pass | `oracles --config /absolute/path --once` | Opens the store, may migrate, fetches/evaluates each enabled asset once, persists decisions/events, then dispatches up to 50 due outbox rows if enabled. | That every asset refreshed, every notification was delivered, or all due outbox work was drained. |
-| Continuous service | `oracles --config /absolute/path` | Immediately refreshes and, if enabled, dispatches up to 50 due rows; repeats refresh and dispatch on their configured intervals until shutdown is requested. | A nonzero process lifetime means all cycles succeeded; refresh and dispatch errors are logged and the loop continues. |
-| Temporarily increase observability | append `--log-level debug` | Overrides only the runtime log level. | A persisted config change or additional validation. |
+| Binary liveness | `oracles ping` | Prints `pong`; does not load config or open a store. | DB, providers, credentials, features, or rate health. |
+| Validate config | `oracles --config /absolute/path/Config.toml check` | Loads, expands, validates configuration/features; initializes logging. | DB connectivity/migration, provider reachability, or sink delivery. |
+| One mutating pass | `oracles --config /absolute/path/Config.toml --once` | Opens/may migrate store, refreshes assets, then dispatches up to 50 due outbox rows. | All assets refreshed or all due rows drained. |
+| Continuous service | `oracles --config /absolute/path/Config.toml` | Immediate refresh/outbox pass, then repeats at configured intervals. | Every cycle/delivery succeeded. |
+| Runtime verbosity | Append `--log-level debug` (or `trace`) | Overrides runtime log level only. | A persistent config change. |
 
-`--config` takes precedence over `ORACLES_CONFIG`; an unset/empty environment
-variable falls back to `Config.toml`. `ping` takes precedence if combined with
-other modes. `check` takes precedence over `--once`. Do not combine modes;
-issue the one command that expresses the intended operation.
+`--config` wins over `ORACLES_CONFIG`; unset/empty falls back to `Config.toml`. If combined, `ping` takes precedence, then `check`, then `--once`; issue only one mode. Use `cargo run --features <needed-features> -- --config …` only for a deliberate checkout test.
 
-Before a routine `--once` or loop start, run `check` against the same absolute
-config path and with the same feature build and environment. Never use `--once`
-as a configuration test against a production store: it is a mutating operation.
+The built-in help lists `error`, `warn`, `info`, and `debug` for `--log-level`, but its parenthetical omits accepted `trace`. `trace` is valid in `[log].level` and as `--log-level trace`.
 
-## Config-edit workflow
+## Prerequisites and features
 
-1. Identify the deployment, exact config path, active binary/features, target
-   store, and required environment-variable *names*. Do not expose secret
-   values in commands, commits, logs, or config.
-2. Read the existing config and make the smallest reviewable change. Preserve
-   `version = 1`; unknown fields within Oracles-owned structures are rejected.
-   A merged universal config may contain unrelated package namespaces, which are
-   ignored by this package.
-3. Keep secrets out of TOML. Use `${NAME}` where absence must fail validation;
-   use `${NAME:-default}` only for a genuinely safe non-secret default. Provider
-   auth and sink credentials are environment variable names/expansions, not
-   literal credentials.
-4. Verify every cross-reference: selected asset -> chain; enabled asset -> at
-   least one enabled feed; feed -> provider; oracle/events/outbox store -> an
-   existing store; route -> an existing enabled sink. Use lowercase, stable
-   asset IDs (not a ticker alone); `decimals` must not exceed 18.
-5. Preserve store safety: both supported drivers require `max_connections = 1`.
-   `events.store` and `outbox.store`, when enabled, must equal `oracles.store`.
-   Distinct rate/event/outbox table names and valid non-reserved SQL identifiers
-   are required. Do not change `write_mode`, table/column mappings, or
-   `migrate` on an existing deployment without a database migration/rollback
-   plan.
-6. Run `check` with the intended runtime environment. Resolve every error
-   before proceeding. A passing check does not prove external connectivity.
-7. For a provider, store, or sink change, first use an isolated non-production
-   database and a scoped/static feed where appropriate; inspect accepted rate,
-   event, and outbox rows. Obtain approval before a production `--once` or loop
-   restart.
-8. After deployment, monitor fresh accepted rows, failure events, and outbox
-   state. Retain the previous known-good config for rollback; do not "roll back"
-   by deleting audit data.
+- Building requires Rust 1.97 or later. Default features are `cli`, `config-toml`, `http-json`, and `sqlite`.
+- `postgres` enables PostgreSQL; `postgres-tls` implies it. `telegram` and `webhook` each imply `http-json`; `full` enables all optional capabilities.
+- The active binary must contain every configured store/sink feature. `check` catches absent compiled features but cannot test external services.
+- Both SQLite and PostgreSQL require `max_connections = 1`; pooling is not implemented.
 
-## Configuration model and supported behavior
+## Safe config workflow
 
-Required root data is `version`, `[stores]`, `[chains]`, `[assets]`, and
-`[oracles]`; `[log]` and `[http]` are optional. Oracle-specific feeds under
-`[oracles.assets.<id>]` take precedence over shared `[[assets.<id>.feeds]]`
-when that oracle asset supplies feeds. `oracles.asset_ids` limits which shared
-assets are resolved.
+1. Identify deployment, absolute config path, active binary/features, target store, and required environment-variable **names**. Never expose secret values.
+2. Read the existing configuration and make the smallest reviewable change. Preserve `version = 1`. Unrelated namespaces in a merged config are ignored; unknown Oracles fields are rejected.
+3. Keep secrets outside TOML: `${NAME}` requires presence; `${NAME:-default}` is only for a safe non-secret default.
+4. Verify references: asset → chain, enabled asset → enabled feed, feed → provider, stores, routes → enabled sinks. Asset IDs are lowercase stable IDs; `decimals <= 18`.
+5. Preserve store/schema safety: events/outbox stores must equal `oracles.store`; table names must be distinct valid non-reserved SQL identifiers. Do not change `migrate`, write mode, table, or column mapping without migration and rollback plans.
+6. Run `check` in the intended environment. For provider/store/sink changes, use an isolated non-production database and inspect rate, event, and outbox rows before requesting production approval.
+7. After deployment, monitor fresh accepted rates, failures, quarantines/disabled assets, and pending/dead outbox rows. Retain known-good config; do not delete audit data as rollback.
 
-- Stores: `sqlite` and feature-gated `postgres` are supported. `migrate = true`
-  creates tables/indexes on open. In upsert mode an `(asset_id, quote, provider)`
-  unique index is required; the in-process migrator creates it. Changing an
-  existing PostgreSQL store from upsert to append requires deliberate removal of
-  the old unique index outside the service.
-- Providers: only `static` and feature-gated `http_json` exist. Static feeds
-  require `params.rate`. HTTP JSON supports only `GET` and an empty-body `POST`,
-  a single optional auth header from `value_env`, dot-separated object paths,
-  and rate values that are JSON numbers or strings. JSON paths do not support
-  arrays, filters, or dotted-key escaping. Source timestamps support `rfc3339`,
-  `unix`, and `unix_ms`; a missing configured path yields no source timestamp.
-- HTTP retries are attempts after the initial request. Backoff is exponential
-  from `http.retry_backoff_ms` and capped at 30 seconds. A provider `transport`
-  reference is validated for existence, but current fetching uses `[http]`
-  defaults; do not rely on transport profile values to override provider HTTP
-  behavior.
-- Selection: `priority` tries enabled feeds by descending priority and uses the
-  first successful candidate. `all` fetches every enabled feed and evaluates
-  each successful candidate. `median` fetches all successful feeds, checks
-  consensus, then evaluates the upper median candidate. `all`/`median` may use
-  bounded concurrent requests. Their successful-feed minimum is always enforced
-  from `safety.consensus.min_successful_feeds`, including when safety is off.
-- Events: `simple` records then immediately delivers matching sinks; with
-  `sink_fail_fast = false`, delivery failures are logged and do not fail that
-  event path. `outbox` requires `events.record = true`,
-  `safety.record_anomalies = true`, and enabled outbox; it persists events and
-  pending non-table deliveries in the decision transaction. The `table` sink is
-  no-op delivery because recording is the delivery. Routes recognize only
-  `oracle.rate_anomaly`, `oracle.rate_quarantined`, `oracle.rate_rejected`,
-  `oracle.provider_failed`, and `oracle.refresh_failed`.
-- Sinks: log and table are always available; Telegram and webhook require their
-  compile-time features. Telegram is POST-only. Although validation permits
-  webhook `POST`, `PUT`, and `PATCH`, the runtime implements **POST only**.
-  Webhook transport references are validated but their URL/method/auth/header
-  profile values are not applied by the current sink; configure `url_env`,
-  headers, and a POST method directly. Webhook URL values are read from the
-  named environment variable at sink construction; header `${...}` values are
-  expanded then. Telegram token/chat ID are read at first delivery and cached
-  for that process lifetime.
+## Exact commands
 
-## Safety decision handling
+```bash
+# Documentation of accepted arguments
+oracles --help
 
-Safety is a correctness boundary, not a notification preference. Keep it
-enabled unless an explicit, documented exception is approved. `expires_at` is
-always `observed_at + stale_after_secs`; `stale_after_secs >= refresh_secs` is
-required. Consumers must filter on `expires_at > CURRENT_TIMESTAMP` (or the
-database equivalent) and never extend or reuse an expired rate.
+# Does not load config or open a database
+oracles ping
 
-Checks run in this order: source age (only when both a maximum and provider
-timestamp exist), minimum/maximum bounds, percent change, then bootstrap.
-The source-age limit in `[oracles.safety]` overrides the root oracle limit.
-Asset overrides can change enabled status, bounds, change limit, and action.
+# Non-mutating config validation
+oracles --config /absolute/path/Config.toml check
 
-| Action | Persistence/result | Operational response |
-|---|---|---|
-| `alert` | Accepts the candidate and emits an event. | Treat it as an accepted but anomalous rate; investigate before relying on it for high-risk flows. |
-| `quarantine` | Does not write an active rate; records/routes the event when events are enabled. | Preserve the prior fresh rate only until it expires; investigate provider/input/policy. |
-| `reject` | Does not write an active rate; records/routes the event when events are enabled. | Treat the candidate as unusable; repair or disable the feed through an approved config change. |
-| `disable_asset` | Does not write an active rate; recorded durable event makes later refreshes skip that asset while it is the latest action. | Stop dependent use when the current rate expires; require explicit human review and a durable superseding event/config action before resuming. |
+# Mutating one pass
+oracles --config /absolute/path/Config.toml --once
 
-`disable_asset` requires enabled, recorded anomaly events; it is not permitted
-as a consensus action. `compare_against = "last_observed"` requires recorded
-events and includes the latest candidate-bearing event or accepted rate;
-`last_accepted` uses accepted rates only. Use `require_multiple_providers` only
-with `all` or `median` and at least two viable feeds: priority mode cannot meet
-it. Consensus spread is `(max - min) / min * 100`; a consensus failure applies
-its configured `alert`, `quarantine`, or `reject` before individual/median
-evaluation. Alert cooldown suppresses sink delivery, not eligible event
-recording.
+# Long-running worker
+oracles --config /absolute/path/Config.toml
 
-## Outcome interpretation and recovery
+# Temporary runtime override
+oracles --config /absolute/path/Config.toml --log-level debug
+```
 
-- `ping` success proves only that the executable reached its liveness path.
-- `check` success proves parsing, environment expansion used by config, schema
-  validation, feature compatibility, and references—not opening the database,
-  migrations, provider authentication, network access, or sink delivery. On
-  failure, make no run attempt; correct the stated error and re-run it.
-- `--once` returning an error is an incomplete pass. With `fail_fast = true`, a
-  refresh error stops the pass. With the default false, the summary can report
-  failed assets while the command still returns success. Any `failed > 0` means
-  those assets were not refreshed successfully; inspect events/logs and current
-  rows, and do not report them healthy. A successful asset can also mean it was
-  skipped because of a durable `disable_asset` event; verify the event state.
-- The loop runs an immediate refresh and immediate outbox pass, logs errors,
-  and continues. Shutdown is cooperative: it exits after the current operation;
-  it does not promise to drain all outbox work.
+`--help` exits 0. Any returned error exits 1 after writing `error: …` to stderr. `ping` writes `pong` to stdout. `check` succeeds after parsing, relevant environment expansion, validation, feature compatibility, and references—not store open/migration, credentials resolved only during fetch/delivery, network, or sink success.
 
-Decision transactions protect accepted rate writes and their recorded events/
-outbox rows: commit only after the decision path succeeds; rollback on an error.
-Provider fetches occur outside the write transaction. Provider/refresh failure
-events are separately transactional. In outbox mode, a committed event and its
-pending delivery rows survive a crash before delivery. Delivery is at-least-once:
-a sink can receive a payload and the subsequent delivered-state update can fail,
-so downstream receivers must tolerate duplicate notifications.
+When the effective log level permits `info`, successful `check` logs this message in the configured format:
 
-Due deliveries are read only from `pending`; success becomes `delivered`.
-Failure increments attempts and either remains `pending` until
-`next_attempt_at`, or becomes `dead` at `max_retries`. An invalid/missing sink
-configuration makes that row dead immediately. A dispatcher store-update error
-means external delivery may have happened but durable status is unknown: do not
-re-send manually without inspecting the row and receiver idempotency. `dead`
-rows are terminal under this implementation; preserve their payload and
-`last_error`, diagnose and approve remediation, then use a controlled database
-or configuration recovery procedure outside the service rather than silently
-deleting/retrying rows.
+```text
+Config is valid.
+```
 
-## Provider and sink troubleshooting
+When the effective log level permits `info`, the one-shot summary logged to stderr is:
 
-1. Run `check`; verify the feature build for configured PostgreSQL, Telegram,
-   and webhook components.
-2. Verify only names/presence of required environment variables. Missing
-   provider auth is discovered when the provider fetches; missing sink secrets
-   are discovered on delivery. Never print their values.
-3. Check exact provider method, URL template placeholders, feed parameters,
-   JSON object paths, timestamp format, quote, timeout, retry policy, and
-   source-age policy. `429` indicates rate limiting; adjust provider-approved
-   request cadence/backoff rather than bypassing limits. `503`, timeouts,
-   malformed JSON, absent paths, and invalid decimal/timestamp values all make
-   the candidate fail.
-4. For a rejected/quarantined candidate, inspect the event reason, prior stored
-   baseline, source/observed timestamps, bounds, percent change, bootstrap, and
-   consensus configuration. Do not weaken a safety control solely to clear an
-   alert.
-5. For store errors, confirm driver feature, URL, filesystem/database access,
-   schema compatibility, `max_connections = 1`, migrations policy, and table /
-   column mappings. Do not manually modify accepted rate rows to mask failures.
-6. For notifications, distinguish simple-mode immediate failures from outbox
-   `pending`/`dead` state. Verify route-to-sink mapping, sink feature, POST-only
-   HTTP behavior, endpoint access, and recipient idempotency. Correct config or
-   environment, validate it, then allow the dispatcher to process due pending
-   rows.
+```text
+Refresh complete: <attempted> attempted, <succeeded> succeeded, <failed> failed
+```
+
+Under the same logging condition, if due outbox work was attempted:
+
+```text
+outbox: <attempted> attempted, <delivered> delivered, <failed> failed, <dead> dead
+```
+
+With `fail_fast = false`, a completed `--once` can exit 0 with `failed > 0`; those assets are not healthy. With `fail_fast = true`, the first refresh error exits 1. A disabled asset is skipped and counted successful, so inspect durable events/fresh rows. The loop logs refresh/outbox errors and continues; shutdown completes the current operation but does not promise an outbox drain.
+
+## Configuration model
+
+Required operational data is `version`, stores, chains, assets, and `[oracles]`; logging and HTTP defaults have defaults. Oracle-local `[oracles.assets.<id>]` feeds replace shared `[[assets.<id>.feeds]]` for that asset; `oracles.asset_ids` limits resolved shared assets.
+
+- Store: `driver`, `url`, `migrate` (default true), `connect_timeout_secs` (default 10), `max_connections` (must be 1).
+- HTTP: `user_agent`, `request_timeout_secs`, `max_retries` (retries after initial request), `retry_backoff_ms` (exponential, capped at 30 seconds).
+- Oracle: `store`, uppercase `quote`, `refresh_secs`, `stale_after_secs >= refresh_secs`, optional `max_source_age_secs`, `max_concurrent_requests` (default 8), `fail_fast`, and selection mode.
+- Rate table: `name`, `write_mode` (`upsert` latest per asset/quote/provider, or `append` every accepted observation), optional column mappings.
+- `expires_at = observed_at + stale_after_secs`. Consumers must not extend it.
+- HTTP JSON supports `GET` and empty-body `POST`; static feeds require `params.rate`. JSON paths are dot-separated object paths only; timestamps are `rfc3339`, `unix`, or `unix_ms`.
+- Provider HTTP transport and webhook transport references are validated, but runtime does not apply their profile values. Provider fetches use `[http]`; configure webhook URL/headers/POST directly on the sink.
+
+## Provider, selection, and safety decision contracts
+
+| Selection | Contract |
+|---|---|
+| `priority` | Descending feed priority; first successful candidate. |
+| `all` | Fetch/evaluate every successful enabled feed after consensus. |
+| `median` | Fetch all, check consensus, evaluate upper median candidate. |
+
+`all`/`median` enforce `consensus.min_successful_feeds` even when safety is off and can use bounded OS-thread concurrency. Consensus spread is `(max - min) / min * 100`. `require_multiple_providers` needs at least two candidates; priority cannot meet it.
+
+Safety checks run source age (when timestamp and limit exist), bounds, percentage change, then bootstrap. `last_observed` requires enabled recorded events; `last_accepted` uses accepted rows. Asset safety can override enabled, bounds, change limit, and action.
+
+| Action | Implication |
+|---|---|
+| `alert` | Accepts rate and emits event. |
+| `quarantine` | Does not write an active rate; records/routes event when enabled. |
+| `reject` | Does not write an active rate; records/routes event when enabled. |
+| `disable_asset` | Does not write an active rate; recorded durable event makes later refreshes skip asset while latest relevant action remains disable. Requires enabled recorded anomaly events. |
+
+Consensus cannot use `disable_asset`. Alert cooldown suppresses sink delivery, not eligible event recording. After a non-accept decision, a prior accepted rate is usable only until it expires.
+
+## Event, sink, and outbox contracts
+
+Event types:
+
+```text
+oracle.rate_anomaly
+oracle.rate_quarantined
+oracle.rate_rejected
+oracle.provider_failed
+oracle.refresh_failed
+```
+
+`simple` mode records then delivers matching sinks; `sink_fail_fast = false` logs a sink error without failing that event path. `outbox` requires `events.record = true`, `safety.record_anomalies = true`, and enabled outbox; it transactionally writes recorded events and pending non-table deliveries. Table sink delivery is a no-op because recording is the delivery.
+
+Log/table sinks are always available; Telegram and webhook are feature-gated. Telegram is POST-only. **Webhook runtime is POST-only**: even if validation accepts PUT/PATCH, delivery returns an error. Webhook URL is read from its named environment variable when the sink is constructed; header expansions are then resolved. Do not rely on webhook transport-profile URL/method/auth/header values.
+
+Decision event/outbox writes commit atomically. Provider and refresh failure events are separately transactional. Dispatcher outcomes are: `pending` → `delivered` on success; failure increments attempts and stays `pending` until `next_attempt_at`; max retries makes it `dead`. Invalid/missing sink config makes a row dead immediately. Delivery is at-least-once; receivers must tolerate duplicates.
+
+## Outcomes, error diagnosis, and recovery
+
+1. Run `check` first. Correct parse, environment, identifier, reference, unsafe configuration, or feature errors before a run.
+2. For provider failure, verify feature, method, URL template/params, object path, timestamp format, quote, `[http]` timeout/retry, and required environment-variable names/presence. `429`, `503`, timeouts, malformed JSON, missing paths, invalid decimal, and invalid timestamp fail a candidate.
+3. For quarantine/rejection, inspect event reason, stored baseline, timestamps, bounds, change, bootstrap, and consensus. Do not weaken safety merely to clear an alert.
+4. For store failure, verify feature, URL/access, migration/schema, mappings, and `max_connections = 1`. Do not edit accepted rows to mask failure.
+5. For notifications, distinguish simple-mode logged failure from outbox state. Verify routes, sink feature, direct webhook POST config, endpoint access, and receiver idempotency.
+6. A dispatcher store-update error means external delivery may have happened while durable state is unknown; do not resend without row inspection and receiver idempotency evidence.
+7. `dead` is terminal in this implementation. Preserve payload and `last_error`, diagnose, get approval, then use controlled database/configuration recovery outside the service—never silently delete or bulk-replay rows.
+
+## Limitations
+
+| Limitation | Consequence |
+|---|---|
+| Store connections | SQLite and PostgreSQL require `max_connections = 1`; no pooling. |
+| Transport profiles | Validated but not applied to provider/webhook runtime settings. |
+| Webhooks | Runtime POST only. |
+| JSON paths | No arrays, filters, or escaped dotted keys. |
+| Store routing | Events/outbox must share `oracles.store`. |
+| Chain support | Metadata only; no chain RPC reads. |
+| Runtime | Synchronous/blocking; all/median concurrency uses OS threads. |
+| Outbox | At-least-once delivery; dead rows require controlled external recovery. |
 
 ## Prohibited actions
 
-- Do not run `--once` or the loop against a store merely to test a config.
-- Do not disable safety, enlarge staleness, loosen bounds/change/age/consensus,
-  switch `alert`, or re-enable a disabled asset without explicit approval.
-- Do not put credentials in TOML, command arguments, source control, event
-  templates, or diagnostic output.
-- Do not assume transport profile fields override HTTP provider/webhook runtime
-  behavior; do not configure PUT/PATCH webhooks.
-- Do not delete, rewrite, or bulk-replay rate/event/outbox records as routine
-  recovery, and do not claim exactly-once notification delivery.
-- Do not consume stale rows, use an event as an accepted rate, or infer success
-  from a process exit alone.
+- Do not run `--once` or the loop against a production store merely to test config.
+- Do not disable/loosen safety, expand staleness, alter selection/bootstrap/consensus, or re-enable a disabled asset without explicit approval.
+- Do not place credentials in TOML, arguments, source control, event templates, or diagnostics.
+- Do not configure PUT/PATCH webhooks or assume transport profiles change HTTP runtime behavior.
+- Do not delete, rewrite, or routine-replay rate/event/outbox records; do not claim exactly-once delivery.
+- Do not consume stale rows, treat an event as an accepted rate, or infer health from process lifetime/exit status alone.
 
-## Final checklist
+## Verification checklist
 
-- [ ] Correct deployment, binary features, absolute config path, and target
-  store identified.
+- [ ] Correct deployment, binary features, absolute config path, and target store identified.
 - [ ] Credentials remain environment-only and were not exposed.
-- [ ] All references, supported methods, provider paths, and feature gates
-  match the current implementation.
-- [ ] Safety policy, bootstrap, consensus, freshness, and consumer stale-rate
-  handling were reviewed; no unapproved weakening occurred.
-- [ ] `oracles --config /absolute/path check` passed in the intended environment.
-- [ ] Any mutating run was explicitly approved and its refresh summary, fresh
-  accepted rows, relevant events, and outbox state were inspected.
-- [ ] Failures, quarantines, disabled assets, pending rows, and dead rows have
-  an owner and an approved recovery path.
+- [ ] References, methods, paths, feature gates, and `max_connections = 1` match runtime behavior.
+- [ ] Safety, bootstrap, consensus, freshness, and consumer stale-rate behavior were reviewed without unapproved weakening.
+- [ ] `oracles --config /absolute/path/Config.toml check` passed in the intended environment.
+- [ ] Any mutating run was approved; its exact summary, fresh accepted rows, events, and outbox state were inspected.
+- [ ] Failures, quarantines, disabled assets, pending rows, and dead rows have an owner and approved recovery path.
