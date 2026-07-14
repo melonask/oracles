@@ -379,6 +379,19 @@ fn resolve_providers(
             )));
         }
 
+        if kind == ProviderKind::HttpJson
+            && provider
+                .paths
+                .as_ref()
+                .and_then(|paths| paths.rate.as_ref())
+                .is_none()
+        {
+            return Err(Error::Config(format!(
+                "http_json provider `{}` requires paths.rate",
+                id.as_str()
+            )));
+        }
+
         // Resolve HTTP transport profile reference.
         if let Some(ref transport_id) = provider.transport
             && !transports.http.contains_key(transport_id)

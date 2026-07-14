@@ -891,7 +891,10 @@ fn invalid_provider_timestamp_format_is_rejected() {
             url_template: Some("https://example.com/{asset}".to_owned()),
             transport: None,
             auth: None,
-            paths: None,
+            paths: Some(RawProviderPathsConfig {
+                rate: Some("rate".to_owned()),
+                source_updated_at: None,
+            }),
             formats: Some(RawProviderFormatsConfig {
                 source_updated_at: Some("iso8601".to_owned()),
             }),
@@ -1254,7 +1257,10 @@ fn invalid_http_json_method_is_rejected() {
             url_template: Some("https://example.com/{asset}".to_owned()),
             transport: None,
             auth: None,
-            paths: None,
+            paths: Some(RawProviderPathsConfig {
+                rate: Some("rate".to_owned()),
+                source_updated_at: None,
+            }),
             formats: None,
         },
     );
@@ -1264,6 +1270,35 @@ fn invalid_http_json_method_is_rejected() {
     assert!(
         err.contains("unsupported method"),
         "expected unsupported method error, got: {err}"
+    );
+}
+
+#[test]
+fn http_json_provider_without_rate_path_is_rejected_during_validation() {
+    let mut raw = base_raw_config();
+    raw.oracles.providers.clear();
+    raw.oracles.providers.insert(
+        "http".to_owned(),
+        RawProviderConfig {
+            kind: "http_json".to_owned(),
+            method: Some("GET".to_owned()),
+            url_template: Some("https://example.com/rates".to_owned()),
+            transport: None,
+            auth: None,
+            paths: Some(RawProviderPathsConfig {
+                rate: None,
+                source_updated_at: Some("updated_at".to_owned()),
+            }),
+            formats: None,
+        },
+    );
+
+    let err = resolve_config(raw, RawTransportsConfig::default())
+        .expect_err("http_json providers without paths.rate must fail validation")
+        .to_string();
+    assert!(
+        err.contains("http_json provider `http` requires paths.rate"),
+        "expected missing rate path error, got: {err}"
     );
 }
 

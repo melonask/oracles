@@ -7,7 +7,7 @@ The CLI writes operational diagnostics to stderr and exits nonzero for configura
 `--once` reports a refresh summary:
 
 ```text
-refresh complete: attempted=3 succeeded=2 failed=1
+Refresh complete: 3 attempted, 2 succeeded, 1 failed
 ```
 
 Accepted rates contain decimal-string `rate`, provider identity, `source_updated_at` when supplied, local `observed_at`, and derived `expires_at`. Consumers must read only rows whose `expires_at` is still in the future.

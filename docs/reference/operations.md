@@ -7,10 +7,10 @@ For notifications, choose `mode = "outbox"`, keep `events.record = true`, and co
 Run the project checks:
 
 ```sh
-cargo fmt --all --check
+cargo fmt --all -- --check
 cargo check --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --all-features --locked
 ```
 
 Operationally, treat a missing fresh rate as unavailable rather than reusing an expired value. Keep provider credentials and webhook tokens in environment variables, set conservative bounds and source-age limits, and use multiple feeds with consensus for higher-value decisions.

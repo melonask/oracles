@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 // ---------------------------------------------------------------------------
 
 use oracles::config::raw::{
-    RawAssetConfig, RawChainConfig, RawConfig, RawOraclesConfig, RawProviderConfig, RawStoreConfig,
+    RawAssetConfig, RawChainConfig, RawConfig, RawOraclesConfig, RawProviderConfig,
+    RawProviderPathsConfig, RawStoreConfig,
 };
 
 fn minimal_raw_config() -> RawConfig {
@@ -344,7 +345,10 @@ fn resolves_http_transport_profile_for_provider() {
             url_template: Some("https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies={quote_lower}".to_owned()),
             transport: Some("default".to_owned()),
             auth: None,
-            paths: None,
+            paths: Some(RawProviderPathsConfig {
+                rate: Some("rate".to_owned()),
+                source_updated_at: None,
+            }),
             formats: None,
         },
     );
@@ -390,7 +394,10 @@ fn rejects_unknown_http_transport_profile() {
             url_template: Some("https://api.example.com".to_owned()),
             transport: Some("nonexistent".to_owned()),
             auth: None,
-            paths: None,
+            paths: Some(RawProviderPathsConfig {
+                rate: Some("rate".to_owned()),
+                source_updated_at: None,
+            }),
             formats: None,
         },
     );

@@ -279,7 +279,7 @@ max_provider_spread_pct = "3"
 action = "quarantine"
 ```
 
-Safety checks run source age (when both a timestamp and limit exist), min/max bounds, percentage change, then bootstrap. Asset `[assets.<id>.safety]` may override enabled status, bounds, change limit, and action. `last_observed` requires enabled, recorded events; `last_accepted` consults accepted rows only. See [selection and safety contracts](#provider-selection-safety-events-outbox-and-store-contracts) for decisions.
+Safety checks run source age (when both a timestamp and limit exist), min/max bounds, percentage change, then bootstrap. `max_change_pct` must be a non-negative decimal. Asset `[assets.<id>.safety]` may override enabled status, bounds, change limit, and action. `last_observed` requires enabled, recorded events; `last_accepted` consults accepted rows only. See [selection and safety contracts](#provider-selection-safety-events-outbox-and-store-contracts) for decisions.
 
 ### Events, sinks, and outbox
 
@@ -413,11 +413,9 @@ Deploy with a durable database, read-only configuration, environment-managed sec
 ## Development and tests
 
 ```bash
-cargo fmt --all --check
-cargo check --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets
-cargo test --all-targets --all-features
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --all-features --locked
 ```
 
 The repository has no external-service end-to-end harness. Its integration tests cover configuration parsing/resolution, provider selection, safety, SQLite persistence, event rendering, and outbox behavior in process.

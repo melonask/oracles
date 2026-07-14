@@ -22,7 +22,7 @@ default_action = "quarantine"
 max_change_pct = "50"
 ```
 
-`stale_after_secs` must be at least `refresh_secs`. Stores currently use one connection. In `upsert` mode, the store keeps one rate per `(asset_id, quote, provider)` with an atomic database upsert; `append` retains history.
+`stale_after_secs` must be at least `refresh_secs`. Stores currently use one connection. In `upsert` mode, the store keeps one rate per `(asset_id, quote, provider)` with an atomic database upsert; `append` retains history. `max_change_pct` must be a non-negative decimal.
 
 Providers are `static` (feed `params.rate`) or `http_json` (URL template, JSON rate path, and optional source timestamp). `priority` takes the first successful feed, `all` evaluates each successful feed, and `median` evaluates the median after consensus.
 

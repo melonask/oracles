@@ -422,7 +422,7 @@ compare_against = "last_accepted"
 # - disable_asset: temporarily disable the asset until manual review
 default_action = "quarantine"
 
-# Default maximum allowed percentage change between accepted updates.
+# Default non-negative maximum allowed percentage change between accepted updates.
 # Asset-specific values can override this.
 max_change_pct = "50"
 

@@ -19,7 +19,7 @@ oracles --config Config.toml --once
 Example output:
 
 ```text
-refresh complete: attempted=2 succeeded=2 failed=0
+Refresh complete: 2 attempted, 2 succeeded, 0 failed
 ```
 
 See [Configuration](/guide/configuration) for production settings.
